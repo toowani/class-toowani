@@ -565,17 +565,30 @@
     }
 
     var transcriptBox = el("div", { class: "transcript" });
+    var clearTranscriptBtn = el("button", { class: "ghost", text: "자막 지우기", onclick: clearTranscript });
+    var transcriptHead = el("div", { class: "rec-bar", style: "margin-top:12px" }, [
+      el("span", { class: "eyebrow", text: "받아쓰기 자막" }),
+      el("span", { style: "margin-left:auto" }, [clearTranscriptBtn])
+    ]);
     var audioSlot = el("div", { style: "margin-top:12px" });
     var summarySlot = el("div", { style: "margin-top:16px" });
 
     modal.appendChild(el("div", { class: "card", style: "margin-bottom:16px" }, [
       el("div", { class: "rec-bar" }, [live, timerEl, segmentEl, startBtn, stopBtn, cancelBtn, starBtn, langSel, statusEl]),
-      transcriptBox, audioSlot, summarySlot
+      transcriptHead, transcriptBox, audioSlot, summarySlot
     ]));
 
     function markStar() {
       if (!(rec && rec.active && rec.key === skey(s))) return;
       rec.final += "\n[★ " + fmtSec(rec.sec) + "] ";
+      drawTranscript();
+    }
+
+    function clearTranscript() {
+      if (rec && rec.active && rec.key === skey(s)) return;
+      if (!sdata(s).transcript) return;
+      if (!confirm("이 세션의 자막을 전부 지울까요? 오디오·요약·메모는 남습니다.")) return;
+      ssave(s, { transcript: "" });
       drawTranscript();
     }
 
@@ -585,6 +598,7 @@
       discardRec().then(function () {
         live.style.display = "none"; startBtn.disabled = false; startBtn.textContent = startLabel();
         stopBtn.disabled = true; cancelBtn.style.display = "none"; starBtn.style.display = "none"; segmentEl.style.display = "none";
+        clearTranscriptBtn.style.display = "";
         drawTranscript();
       });
     }
@@ -687,7 +701,7 @@
         onStatus: function (t) { statusEl.textContent = t; }
       }).then(function () {
         live.style.display = ""; startBtn.disabled = true; stopBtn.disabled = false; cancelBtn.style.display = ""; starBtn.style.display = "";
-        segmentEl.style.display = ""; segmentEl.textContent = "누적 " + segNum + "번째 녹음";
+        segmentEl.style.display = ""; segmentEl.textContent = "누적 " + segNum + "번째 녹음"; clearTranscriptBtn.style.display = "none";
         transcriptBox.style.padding = "14px"; transcriptBox.style.border = "1px solid var(--line)"; transcriptBox.style.maxHeight = "260px";
         drawTranscript();
       }).catch(function (e) {
@@ -698,6 +712,7 @@
       stopRec().then(function () {
         live.style.display = "none"; startBtn.disabled = false; startBtn.textContent = startLabel();
         stopBtn.disabled = true; cancelBtn.style.display = "none"; starBtn.style.display = "none"; segmentEl.style.display = "none";
+        clearTranscriptBtn.style.display = "";
         drawTranscript(); drawAudio();
         makeSummary(s, summarySlot, drawSummary);
       });
