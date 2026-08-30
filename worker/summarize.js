@@ -8,17 +8,18 @@
  * 이렇게 하면 API 키가 브라우저에 노출되지 않습니다.
  */
 
-const ALLOW = "https://class.toowani.com"; // 로컬 테스트 중이면 "*"
+const ALLOW = ["https://class.toowani.com", "http://localhost"]; // 로컬 테스트는 http://localhost:포트 도 허용
 
 export default {
   async fetch(request, env) {
-    if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
-    if (request.method !== "POST") return cors(new Response("POST only", { status: 405 }));
+    const origin = allowedOrigin(request.headers.get("Origin"));
+    if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }), origin);
+    if (request.method !== "POST") return cors(new Response("POST only", { status: 405 }), origin);
 
     let body;
-    try { body = await request.json(); } catch { return cors(json({ error: "bad json" }, 400)); }
+    try { body = await request.json(); } catch { return cors(json({ error: "bad json" }, 400), origin); }
     const prompt = String(body.prompt || "").slice(0, 60000);
-    if (!prompt) return cors(json({ error: "prompt 없음" }, 400));
+    if (!prompt) return cors(json({ error: "prompt 없음" }, 400), origin);
 
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -34,19 +35,25 @@ export default {
       })
     });
 
-    if (!r.ok) return cors(json({ error: "upstream " + r.status, detail: await r.text() }, 502));
+    if (!r.ok) return cors(json({ error: "upstream " + r.status, detail: await r.text() }, 502), origin);
     const data = await r.json();
     const summary = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
-    return cors(json({ summary }));
+    return cors(json({ summary }), origin);
   }
 };
 
 function json(o, status = 200) {
   return new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
 }
-function cors(res) {
-  res.headers.set("Access-Control-Allow-Origin", ALLOW);
+function allowedOrigin(origin) {
+  if (!origin) return ALLOW[0];
+  const ok = ALLOW.some((a) => origin === a || origin.indexOf(a + ":") === 0);
+  return ok ? origin : ALLOW[0];
+}
+function cors(res, origin) {
+  res.headers.set("Access-Control-Allow-Origin", origin);
   res.headers.set("Access-Control-Allow-Headers", "content-type, authorization");
   res.headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.headers.append("Vary", "Origin");
   return res;
 }
