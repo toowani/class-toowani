@@ -308,22 +308,26 @@
     ]);
 
     var list = el("div", { class: "session-list" });
-    sessionsOf(c).forEach(function (s) {
-      var d = sdata(s);
-      list.appendChild(el("button", {
-        class: "session-row", style: "color:" + c.color,
-        onclick: function () { openSession(s); }
-      }, [
-        el("span", { class: "w", text: "W" + String(s.week).padStart(2, "0") + " " + (parse(s.date).getMonth() + 1) + "/" + parse(s.date).getDate() }),
-        el("span", { class: "t", style: s.date < todayISO ? "" : "color:var(--fg)", text: (s.mark ? "[" + s.mark + "] " : "") + (s.topic || "—") }),
-        el("span", { class: "flags" }, [
-          d.audio ? el("span", { class: "flag on", text: "REC" }) : null,
-          d.summary ? el("span", { class: "flag on", text: "요약" }) : null,
-          (d.note && d.note.trim()) ? el("span", { class: "flag on", text: "메모" }) : null,
-          s.date === todayISO ? el("span", { class: "flag", text: "오늘" }) : null
-        ])
-      ]));
-    });
+    function drawList() {
+      list.innerHTML = "";
+      sessionsOf(c).forEach(function (s) {
+        var d = sdata(s);
+        list.appendChild(el("button", {
+          class: "session-row", style: "color:" + c.color,
+          onclick: function () { openSession(s, { onClose: drawList }); }
+        }, [
+          el("span", { class: "w", text: "W" + String(s.week).padStart(2, "0") + " " + (parse(s.date).getMonth() + 1) + "/" + parse(s.date).getDate() }),
+          el("span", { class: "t", style: s.date < todayISO ? "" : "color:var(--fg)", text: (s.mark ? "[" + s.mark + "] " : "") + (s.topic || "—") }),
+          el("span", { class: "flags" }, [
+            d.audio ? el("span", { class: "flag on", text: "REC" }) : null,
+            d.summary ? el("span", { class: "flag on", text: "요약" }) : null,
+            (d.note && d.note.trim()) ? el("span", { class: "flag on", text: "메모" }) : null,
+            s.date === todayISO ? el("span", { class: "flag", text: "오늘" }) : null
+          ])
+        ]));
+      });
+    }
+    drawList();
 
     shell([
       el("div", {}, [el("a", { class: "ghost", href: "#/", text: "← 오늘" })]),
@@ -338,7 +342,7 @@
     if (openWeek) {
       var target = sessionsOf(c).filter(function (s) { return s.week === openWeek; });
       var pick = target.filter(function (s) { return s.date >= todayISO; })[0] || target[0];
-      if (pick) openSession(pick);
+      if (pick) openSession(pick, { hashDriven: true });
     }
   }
 
@@ -372,7 +376,8 @@
   /* ── 세션(수업 한 회차) ───────────────── */
   var rec = null;
 
-  function openSession(s) {
+  function openSession(s, opts) {
+    opts = opts || {};
     var d = sdata(s), c = s.course;
     var scrim = el("div", { class: "scrim", onclick: function (e) { if (e.target === scrim) close(); } });
     var modal = el("div", { class: "modal", style: "color:" + c.color });
@@ -381,9 +386,17 @@
     function close() {
       if (rec && rec.active) { if (!confirm("녹음 중입니다. 중지하고 닫을까요?")) return; stopRec(); }
       document.body.removeChild(scrim); document.body.style.overflow = "";
-      route();
+      document.removeEventListener("keydown", onKeydown);
+      if (opts.hashDriven) {
+        var target = "#/c/" + c.id;
+        if (location.hash === target) route();
+        else location.hash = target;
+      } else if (opts.onClose) {
+        opts.onClose();
+      }
     }
-    document.addEventListener("keydown", function esc(e) { if (e.key === "Escape" && document.body.contains(scrim)) { close(); document.removeEventListener("keydown", esc); } });
+    function onKeydown(e) { if (e.key === "Escape" && document.body.contains(scrim)) close(); }
+    document.addEventListener("keydown", onKeydown);
 
     modal.appendChild(el("div", { class: "modal-head" }, [
       el("div", {}, [
