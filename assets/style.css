@@ -224,6 +224,11 @@ textarea.note::placeholder { color: var(--fg-dim); }
 .summary .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { font-family: var(--mono); font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--fg-mute); }
 
+/* 오디오 첨부 */
+.audio-list { display: flex; flex-direction: column; gap: 12px; }
+.audio-item { border-top: 1px solid var(--line); padding-top: 12px; }
+.audio-item:first-child { border-top: none; padding-top: 0; }
+
 /* 할 일 */
 .todo { display: flex; align-items: flex-start; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
 .todo:last-child { border-bottom: none; }

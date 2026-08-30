@@ -60,12 +60,24 @@
     return out.sort(function (a, b) { return a.m.start < b.m.start ? -1 : 1; });
   }
   function skey(s) { return "s/" + SEM_ID + "/" + s.course.id + "/" + s.date + "/" + s.m.start; }
-  function sdata(s) { return Store.get(skey(s), { note: "", transcript: "", summary: null, audio: null }); }
+  function normalizeSession(d) {
+    if (!Array.isArray(d.audios)) {
+      d.audios = d.audio ? [{ id: d.audio, label: "녹음", size: null, at: null }] : [];
+    }
+    return d;
+  }
+  function sdata(s) { return normalizeSession(Store.get(skey(s), { note: "", transcript: "", summary: null, audio: null, audios: [] })); }
   function ssave(s, patch) {
     var d = sdata(s); Object.keys(patch).forEach(function (k) { d[k] = patch[k]; });
     Store.set(skey(s), d); return d;
   }
-  function hasContent(d) { return !!(d && ((d.note && d.note.trim()) || (d.transcript && d.transcript.trim()) || d.summary || d.audio)); }
+  function hasContent(d) { return !!(d && ((d.note && d.note.trim()) || (d.transcript && d.transcript.trim()) || d.summary || (d.audios && d.audios.length))); }
+  function fmtBytes(n) {
+    if (n == null) return "";
+    if (n < 1024) return n + "B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(0) + "KB";
+    return (n / 1024 / 1024).toFixed(1) + "MB";
+  }
 
   /* ── 라우터 ───────────────────────────── */
   function syncNav() {
@@ -319,7 +331,7 @@
           el("span", { class: "w", text: "W" + String(s.week).padStart(2, "0") + " " + (parse(s.date).getMonth() + 1) + "/" + parse(s.date).getDate() }),
           el("span", { class: "t", style: s.date < todayISO ? "" : "color:var(--fg)", text: (s.mark ? "[" + s.mark + "] " : "") + (s.topic || "—") }),
           el("span", { class: "flags" }, [
-            d.audio ? el("span", { class: "flag on", text: "REC" }) : null,
+            (d.audios && d.audios.length) ? el("span", { class: "flag on", text: "REC" }) : null,
             d.summary ? el("span", { class: "flag on", text: "요약" }) : null,
             (d.note && d.note.trim()) ? el("span", { class: "flag on", text: "메모" }) : null,
             s.date === todayISO ? el("span", { class: "flag", text: "오늘" }) : null
@@ -461,19 +473,46 @@
     function drawAudio() {
       audioSlot.innerHTML = "";
       var dd = sdata(s);
-      if (!dd.audio) return;
-      AudioStore.get(dd.audio).then(function (blob) {
-        if (!blob) return;
-        var url = URL.createObjectURL(blob);
-        audioSlot.appendChild(el("audio", { controls: "controls", src: url, style: "width:100%" }));
-        audioSlot.appendChild(el("div", { class: "rec-bar", style: "margin-top:8px" }, [
-          el("a", { class: "btn", href: url, download: c.id + "-" + s.date + ".webm", text: "↓ 오디오 저장" }),
-          el("button", { class: "ghost", text: "녹음 삭제", onclick: function () {
-            if (!confirm("이 회차의 오디오를 지울까요? (자막·요약·메모는 남습니다)")) return;
-            AudioStore.del(dd.audio); ssave(s, { audio: null }); drawAudio();
-          } })
-        ]));
+      var listEl = el("div", { class: "audio-list" });
+      dd.audios.forEach(function (a) {
+        var row = el("div", { class: "audio-item" }, [
+          el("div", { class: "tiny dim mono", text: (a.label || "오디오") + (a.size != null ? " · " + fmtBytes(a.size) : "") + (a.at ? " · " + a.at : "") })
+        ]);
+        AudioStore.get(a.id).then(function (blob) {
+          if (!blob) return;
+          var url = URL.createObjectURL(blob);
+          row.appendChild(el("audio", { controls: "controls", src: url, style: "width:100%;margin-top:6px" }));
+          row.appendChild(el("div", { class: "rec-bar", style: "margin-top:8px" }, [
+            el("a", { class: "btn", href: url, download: c.id + "-" + s.date + "-" + (a.label || "audio") + ".webm", text: "↓ 저장" }),
+            el("button", { class: "ghost", text: "삭제", onclick: function () {
+              if (!confirm("이 오디오를 지울까요?")) return;
+              AudioStore.del(a.id);
+              var dd2 = sdata(s);
+              ssave(s, { audios: dd2.audios.filter(function (x) { return x.id !== a.id; }) });
+              drawAudio();
+            } })
+          ]));
+        });
+        listEl.appendChild(row);
       });
+      audioSlot.appendChild(listEl);
+
+      var uploadInput = el("input", {
+        type: "file", accept: "audio/*", style: "display:none",
+        onchange: function (e) {
+          var f = e.target.files[0]; if (!f) return;
+          if (f.size > 50 * 1024 * 1024) alert("50MB가 넘는 파일입니다 (" + fmtBytes(f.size) + "). 저장 공간에 따라 실패할 수 있지만 계속 진행합니다.");
+          var id = skey(s) + "/upload/" + Date.now();
+          AudioStore.put(id, f).then(function () {
+            var dd3 = sdata(s);
+            ssave(s, { audios: dd3.audios.concat([{ id: id, label: "휴대폰", size: f.size, at: new Date().toLocaleString("ko-KR") }]) });
+            drawAudio();
+          });
+        }
+      });
+      audioSlot.appendChild(el("div", { class: "rec-bar", style: "margin-top:10px" }, [
+        el("label", { class: "btn", style: "cursor:pointer" }, [document.createTextNode("↑ 오디오 업로드"), uploadInput])
+      ]));
     }
 
     function drawSummary() {
@@ -559,9 +598,10 @@
       if (r.sr) { try { r.sr.stop(); } catch (x) {} }
       r.mr.onstop = function () {
         var blob = new Blob(r.chunks, { type: r.mr.mimeType || "audio/webm" });
-        var id = r.key + "/audio";
+        var id = r.key + "/rec-" + Date.now();
         AudioStore.put(id, blob).then(function () {
-          ssave(r.s, { transcript: r.final.trim(), audio: id });
+          var d = sdata(r.s);
+          ssave(r.s, { transcript: r.final.trim(), audios: d.audios.concat([{ id: id, label: "녹음", size: blob.size, at: new Date().toLocaleString("ko-KR") }]) });
           rec = null; res();
         }).catch(function () {
           ssave(r.s, { transcript: r.final.trim() });
