@@ -144,6 +144,12 @@
     return out.join(" · ");
   }
   function mmdd(dateISO) { var d = parse(dateISO); return (d.getMonth() + 1) + "/" + d.getDate(); }
+  function ddayLabel(dateISO) {
+    var n = diffDays(todayISO, dateISO);
+    if (n > 0) return "D-" + n;
+    if (n === 0) return "D-day";
+    return "D+" + (-n);
+  }
 
   /* ── D-day 스트립 ─────────────────────── */
   var DDAY_RE = /시험|고사|중간|기말|Midterm|Final|발표|마감/i;
@@ -296,18 +302,28 @@
   /* ── 할 일 모음 ───────────────────────── */
   function todos(cid) { return Store.get("todo/" + SEM_ID + "/" + cid, []); }
   function saveTodos(cid, arr) { Store.set("todo/" + SEM_ID + "/" + cid, arr); }
+  function sortByDue(items, getDue) {
+    return items.slice().sort(function (a, b) {
+      var da = getDue(a), db = getDue(b);
+      if (da && db) return da < db ? -1 : da > db ? 1 : 0;
+      if (da) return -1;
+      if (db) return 1;
+      return 0;
+    });
+  }
 
   function todoDigest() {
     var rows = [];
     SEM.courses.forEach(function (c) {
       todos(c.id).filter(function (t) { return !t.done; }).forEach(function (t) { rows.push({ c: c, t: t }); });
     });
+    rows = sortByDue(rows, function (r) { return r.t.due; });
     var box = el("div", { class: "card" });
     if (!rows.length) box.appendChild(el("div", { class: "small dim", text: "아직 없습니다. 과목 페이지에서 과제·준비물을 적어두면 여기 모입니다." }));
     rows.slice(0, 12).forEach(function (r) {
       box.appendChild(el("div", { class: "todo" }, [
         el("span", { class: "tiny mono", style: "color:" + r.c.color + ";width:96px;flex:none", text: r.c.name }),
-        el("label", { text: r.t.text + (r.t.due ? "  · " + r.t.due : "") })
+        el("label", { text: r.t.text + (r.t.due ? "  · " + ddayLabel(r.t.due) + " (" + mmdd(r.t.due) + ")" : "") })
       ]));
     });
     return el("section", { class: "block" }, [
@@ -430,19 +446,23 @@
       box.innerHTML = "";
       var arr = todos(c.id);
       if (!arr.length) box.appendChild(el("div", { class: "small dim", text: "과제·준비물·읽을 것을 적어두세요." }));
-      arr.forEach(function (t, i) {
+      var order = arr.map(function (t, i) { return i; });
+      order = sortByDue(order, function (i) { return arr[i].due; });
+      order.forEach(function (i) {
+        var t = arr[i];
         box.appendChild(el("div", { class: "todo" + (t.done ? " done" : "") }, [
           el("input", { type: "checkbox", checked: t.done ? "checked" : null, onchange: function () { arr[i].done = !arr[i].done; saveTodos(c.id, arr); draw(); } }),
-          el("label", { text: t.text + (t.due ? "  · " + t.due : "") }),
+          el("label", { text: t.text + (t.due ? "  · " + ddayLabel(t.due) + " (" + mmdd(t.due) + ")" : "") }),
           el("button", { class: "x", title: "삭제", text: "✕", onclick: function () { arr.splice(i, 1); saveTodos(c.id, arr); draw(); } })
         ]));
       });
-      var input = el("input", { placeholder: "예: 3주차 과제 제출 (9/12)", onkeydown: function (e) { if (e.key === "Enter") add(); } });
+      var input = el("input", { placeholder: "예: 3주차 과제 제출", onkeydown: function (e) { if (e.key === "Enter") add(); } });
+      var dueInput = el("input", { type: "date", style: "flex:0 0 150px" });
       function add() {
         var v = input.value.trim(); if (!v) return;
-        var arr2 = todos(c.id); arr2.push({ text: v, done: false }); saveTodos(c.id, arr2); draw();
+        var arr2 = todos(c.id); arr2.push({ text: v, done: false, due: dueInput.value || null }); saveTodos(c.id, arr2); draw();
       }
-      box.appendChild(el("div", { class: "add-row" }, [input, el("button", { class: "btn", text: "추가", onclick: add })]));
+      box.appendChild(el("div", { class: "add-row" }, [input, dueInput, el("button", { class: "btn", text: "추가", onclick: add })]));
     }
     draw();
     return el("section", { class: "block" }, [
@@ -500,6 +520,7 @@
     var live = el("span", { class: "pulse", style: "display:none" });
     var startBtn = el("button", { class: "btn danger", text: "● 녹음 시작", onclick: start });
     var stopBtn = el("button", { class: "btn", text: "■ 중지 후 요약", disabled: "disabled", onclick: stop });
+    var starBtn = el("button", { class: "btn", style: "display:none", text: "★ 중요", onclick: markStar });
     var langSel = el("select", { class: "btn", style: "padding:8px 10px" }, [
       el("option", { value: "ko-KR", text: "받아쓰기 한국어" }),
       el("option", { value: "en-US", text: "받아쓰기 English" })
@@ -512,9 +533,15 @@
     var summarySlot = el("div", { style: "margin-top:16px" });
 
     modal.appendChild(el("div", { class: "card", style: "margin-bottom:16px" }, [
-      el("div", { class: "rec-bar" }, [live, timerEl, startBtn, stopBtn, langSel, statusEl]),
+      el("div", { class: "rec-bar" }, [live, timerEl, startBtn, stopBtn, starBtn, langSel, statusEl]),
       transcriptBox, audioSlot, summarySlot
     ]));
+
+    function markStar() {
+      if (!(rec && rec.active && rec.key === skey(s))) return;
+      rec.final += "\n[★ " + fmtSec(rec.sec) + "] ";
+      drawTranscript();
+    }
 
     /* 메모 */
     var note = el("textarea", { class: "note", placeholder: "수업 중 메모. 자동 저장됩니다.\n\n· 이해 안 된 것\n· 교수님이 강조한 것\n· 시험에 나올 것 같은 것" });
@@ -611,7 +638,7 @@
         onText: drawTranscript,
         onStatus: function (t) { statusEl.textContent = t; }
       }).then(function () {
-        live.style.display = ""; startBtn.disabled = true; stopBtn.disabled = false;
+        live.style.display = ""; startBtn.disabled = true; stopBtn.disabled = false; starBtn.style.display = "";
         transcriptBox.style.padding = "14px"; transcriptBox.style.border = "1px solid var(--line)"; transcriptBox.style.maxHeight = "260px";
         drawTranscript();
       }).catch(function (e) {
@@ -620,7 +647,7 @@
     }
     function stop() {
       stopRec().then(function () {
-        live.style.display = "none"; startBtn.disabled = false; stopBtn.disabled = true;
+        live.style.display = "none"; startBtn.disabled = false; stopBtn.disabled = true; starBtn.style.display = "none";
         drawTranscript(); drawAudio();
         makeSummary(s, summarySlot, drawSummary);
       });
@@ -719,6 +746,7 @@
     return "너는 대학생의 수업 노트 정리 조수다. 아래는 " + c.name + "(" + c.code + ", " + c.prof + ") 수업의 " +
       s.week + "주차(" + s.date + ") 자동 받아쓰기 기록과 학생 메모다. 받아쓰기에는 오타와 오인식이 많으니 문맥으로 보정해라.\n" +
       "이번 주 실라버스 주제: " + (s.topic || "") + "\n다음 주 주제: " + next + "\n\n" +
+      "받아쓰기 중 학생이 '[★ mm:ss]'로 표시한 구간이 있다면 그 구간을 최우선으로 다뤄라.\n\n" +
       "다음 형식의 한국어 마크다운으로만 답하라. 없는 항목은 생략하지 말고 '해당 없음'이라고 써라.\n" +
       "## 한 줄 요약\n## 핵심 내용 (5~8개 불릿, 수식/용어는 원어 병기)\n## 오늘 나온 용어\n## 과제·공지·시험 언급\n## 헷갈릴 만한 부분 / 복습 포인트\n## 다음 수업 예습 한 가지\n\n" +
       "=== 받아쓰기 ===\n" + text.slice(0, 24000) + "\n\n=== 학생 메모 ===\n" + (note || "(없음)");
@@ -761,7 +789,9 @@
     var scored = sents.map(function (x, i) {
       var sc = 0;
       x.toLowerCase().split(/[^0-9a-z가-힣]+/).forEach(function (w) { sc += (freq[w] || 0); });
-      return { i: i, x: x, sc: sc / Math.sqrt(x.length + 8) };
+      var weighted = sc / Math.sqrt(x.length + 8);
+      if (x.indexOf("★") >= 0) weighted += 1000; // 녹음 중 북마크한 구간 최우선
+      return { i: i, x: x, sc: weighted };
     }).sort(function (a, b) { return b.sc - a.sc; }).slice(0, 6).sort(function (a, b) { return a.i - b.i; });
 
     var hits = (c.keywords || []).filter(function (k) { return all.toLowerCase().indexOf(k.toLowerCase()) >= 0; });
