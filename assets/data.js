@@ -250,3 +250,97 @@ window.SEM_3_2 = {
     }
   ]
 };
+
+/* ── 지난 학기 성적 (성적증명서 기준, S = Pass/무등급) ─────── */
+window.ARCHIVES = {
+  "1-1": {
+    earned: 18,
+    gpa: "3.84/4.5",
+    courses: [
+      { code: "GS0110", name: "헬스", credits: 0, grade: "S" },
+      { code: "GS1001", name: "미적분학과 응용", credits: 3, grade: "A0" },
+      { code: "GS1101", name: "일반물리학및연습I", credits: 3, grade: "B+" },
+      { code: "GS1111", name: "일반물리학실험I", credits: 1, grade: "A+" },
+      { code: "GS1201", name: "일반화학및연습I", credits: 3, grade: "B0" },
+      { code: "GS1512", name: "글쓰기의기초:학술적글쓰기", credits: 3, grade: "A0" },
+      { code: "GS1901", name: "GIST새내기", credits: 1, grade: "S" },
+      { code: "GS2704", name: "기업과사회I", credits: 3, grade: "A+" },
+      { code: "UC0901", name: "과학기술과경제", credits: 1, grade: "S" }
+    ]
+  },
+  "1-2": {
+    earned: 19,
+    gpa: "3.94/4.5",
+    note: "GS2001·GS2823 성적은 증명서 도장에 가려 합계(67.0) 역산값 — 원본 확인 필요",
+    courses: [
+      { code: "GS0213", name: "컴퓨터음악만들기", credits: 0, grade: "S" },
+      { code: "GS1211", name: "일반화학실험I", credits: 1, grade: "B0" },
+      { code: "GS1401", name: "컴퓨터프로그래밍", credits: 3, grade: "A0" },
+      { code: "GS1603", name: "영어I:발표와토론", credits: 2, grade: "A+" },
+      { code: "GS2001", name: "다변수해석학과응용", credits: 3, grade: "A0" },
+      { code: "GS2822", name: "AI와나", credits: 2, grade: "B+" },
+      { code: "GS2823", name: "수학의위대한순간들-AI", credits: 3, grade: "A0" },
+      { code: "GS2833", name: "비판적디자인", credits: 3, grade: "A0" },
+      { code: "UC0202", name: "창의함양", credits: 1, grade: "S" },
+      { code: "UC0902", name: "GIST전공탐색", credits: 1, grade: "S" }
+    ]
+  },
+  "2-1": {
+    earned: 17,
+    gpa: "3.61/4.5",
+    courses: [
+      { code: "EC2202", name: "자료구조", credits: 3, grade: "A0" },
+      { code: "EC2203", name: "디지털설계", credits: 3, grade: "A0" },
+      { code: "GS0112", name: "수영", credits: 0, grade: "S" },
+      { code: "GS2004", name: "선형대수학과응용", credits: 3, grade: "B+" },
+      { code: "GS2652", name: "영어II:이공계글쓰기입문", credits: 2, grade: "B0" },
+      { code: "GS2809", name: "아름다운지구", credits: 3, grade: "B0" },
+      { code: "GS2824", name: "문명과수학", credits: 3, grade: "A0" },
+      { code: "UC9331", name: "GIST대학콜로퀴움", credits: 0, grade: "S" }
+    ]
+  },
+  "2-summer": {
+    earned: 1,
+    note: "GPA 미산입",
+    courses: [
+      { code: "GS0700", name: "세미나<몰입캠프:프로그래밍과스타트업>(KAIST)", credits: 1, grade: "S" }
+    ]
+  },
+  "2-2": {
+    earned: 16,
+    gpa: "4.16/4.5",
+    courses: [
+      { code: "AI2002", name: "디지털유니버스콜로퀴움", credits: 1, grade: "S" },
+      { code: "EC2206", name: "알고리즘개론", credits: 3, grade: "A+" },
+      { code: "GS0108", name: "힙합댄스", credits: 0, grade: "S" },
+      { code: "GS1496", name: "(MOOC)기계학습을위한수학:선형대수학", credits: 1, grade: "S" },
+      { code: "GS2420", name: "(MOOC)알고리즘기반논리적사고-기초", credits: 1, grade: "S" },
+      { code: "GS2421", name: "(MOOC)알고리즘기반논리적사고-심화", credits: 1, grade: "S" },
+      { code: "GS2795", name: "문명으로보는21세기", credits: 3, grade: "A0" },
+      { code: "GS2797", name: "꿈의사회학", credits: 3, grade: "A0" },
+      { code: "GS3401", name: "(MOOC)프론트엔드웹개발", credits: 2, grade: "S" },
+      { code: "UC0201", name: "사회봉사", credits: 1, grade: "S" }
+    ]
+  },
+  "3-1": {
+    earned: 19,
+    gpa: "4.15/4.5",
+    courses: [
+      { code: "AI5302", name: "딥러닝", credits: 3, grade: "A0" },
+      { code: "CT5104", name: "사운드디자인과프로그래밍", credits: 3, grade: "A+" },
+      { code: "EC2107", name: "기초공학수학", credits: 3, grade: "A+" },
+      { code: "EC3102", name: "컴퓨터시스템이론및실험", credits: 4, grade: "A0" },
+      { code: "EC3216", name: "오토마타이론", credits: 3, grade: "B+" },
+      { code: "HS2544", name: "문화콘텐츠의이해", credits: 3, grade: "A+" },
+      { code: "UC9331", name: "GIST대학콜로퀴움", credits: 0, grade: "S" }
+    ]
+  },
+  "3-summer": {
+    earned: 6,
+    note: "계절학기 — 등급은 표기되지만 전체 평점(GPA) 계산에는 미산입",
+    courses: [
+      { code: "", name: "이산수학", credits: 3, grade: "B+" },
+      { code: "", name: "인공지능", credits: 3, grade: "A0" }
+    ]
+  }
+};

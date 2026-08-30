@@ -35,15 +35,17 @@
   var list = document.getElementById("list");
   document.getElementById("cnt").textContent = String(window.SEMESTERS.length).padStart(2, "0");
   window.SEMESTERS.slice().reverse().forEach(function (s) {
+    var arc = window.ARCHIVES && window.ARCHIVES[s.id];
+    var sub = s.state === "current" ? "녹음 · 요약 · 메모"
+      : arc ? ("취득 " + arc.earned + "학점" + (arc.gpa ? " · 평점 " + arc.gpa : ""))
+      : (s.season ? "계절학기 · 직접 추가" : "결과 · 프로젝트 · 회고");
     var a = document.createElement("a");
     a.className = "card sem-card" + (s.state === "current" ? " current" : "");
     a.href = s.id + "/";
     a.innerHTML =
       '<span class="id">' + s.id + '</span>' +
       '<span><b>' + s.label + '</b>' +
-      '<span class="tiny dim mono" style="display:block">' +
-        (s.state === "current" ? "녹음 · 요약 · 메모" : (s.season ? "계절학기 · 직접 추가" : "결과 · 프로젝트 · 회고")) +
-      '</span></span>' +
+      '<span class="tiny dim mono" style="display:block">' + sub + '</span></span>' +
       '<span class="badge' + (s.state === "current" ? " live" : "") + '">' + (s.state === "current" ? "진행 중" : "종료") + '</span>';
     list.appendChild(a);
   });

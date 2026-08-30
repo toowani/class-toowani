@@ -874,6 +874,7 @@
   /* ── 지난 학기(아카이브) ──────────────── */
   function renderArchive() {
     var meta = (window.SEMESTERS || []).filter(function (x) { return x.id === SEM_ID; })[0] || { id: SEM_ID, label: SEM_ID };
+    var arc = (window.ARCHIVES || {})[SEM_ID];
     var key = "archive/" + SEM_ID;
     var rows = Store.get(key, []);
     function save() { Store.set(key, rows); render(); }
@@ -881,7 +882,7 @@
     var listBox = el("div", { class: "grid g2" });
     function render() {
       listBox.innerHTML = "";
-      if (!rows.length) listBox.appendChild(el("div", { class: "empty", text: "아직 비어 있습니다. 아래에서 과목을 추가하세요." }));
+      if (!rows.length) listBox.appendChild(el("div", { class: "empty", text: "아직 비어 있습니다. 아래에서 추가하세요." }));
       rows.forEach(function (r, i) {
         listBox.appendChild(el("div", { class: "card" }, [
           el("div", { class: "tiny mono dim", text: (r.code || "") + (r.prof ? " · " + r.prof : "") }),
@@ -898,6 +899,21 @@
     }
     render();
 
+    var courseGrid = null;
+    if (arc) {
+      courseGrid = el("div", { class: "grid g2" });
+      arc.courses.forEach(function (co) {
+        courseGrid.appendChild(el("div", { class: "card" }, [
+          el("div", { class: "tiny mono dim", text: co.code || "" }),
+          el("h3", { style: "margin-top:6px;font-size:17px", text: co.name }),
+          el("div", { class: "rec-bar", style: "margin-top:10px" }, [
+            el("span", { class: "flag", text: co.grade }),
+            el("span", { class: "flag", text: co.credits + "학점" })
+          ])
+        ]));
+      });
+    }
+
     function field(ph, w) { return el("input", { placeholder: ph, style: "flex:" + (w || 1) + ";min-width:110px;background:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 12px" }); }
     var fName = field("과목명", 2), fCode = field("과목코드"), fProf = field("교수"), fCr = field("학점"), fGrade = field("성적"), fLink = field("프로젝트/코드 링크", 2);
     var fNote = el("textarea", { class: "note", style: "min-height:80px;margin-top:8px", placeholder: "한 줄 회고 · 배운 것 · 다시 본다면" });
@@ -906,10 +922,17 @@
       el("section", { class: "hero" }, [el("div", {}, [
         el("p", { class: "eyebrow", text: "지난 학기 · 기록만 남김" }),
         el("h1", { text: meta.label }),
-        el("p", { class: "mute", style: "margin-top:10px", text: "성적 · 프로젝트 링크 · 회고만 정리하는 페이지입니다." })
+        arc
+          ? el("p", { class: "mute", style: "margin-top:10px", text: "취득 " + arc.earned + "학점" + (arc.gpa ? " · 평점 " + arc.gpa : " · GPA 미산입") })
+          : el("p", { class: "mute", style: "margin-top:10px", text: "성적 · 프로젝트 링크 · 회고만 정리하는 페이지입니다." }),
+        (arc && arc.note) ? el("p", { class: "tiny dim", style: "margin-top:8px", text: "※ " + arc.note }) : null
       ])]),
+      arc ? el("section", { class: "block" }, [
+        el("div", { class: "block-head" }, [el("h2", { text: "수강 과목" }), el("span", { class: "eyebrow", text: arc.courses.length + "과목" })]),
+        courseGrid
+      ]) : null,
       el("section", { class: "block" }, [
-        el("div", { class: "block-head" }, [el("h2", { text: "수강 과목" }), el("span", { class: "eyebrow", text: "이 브라우저에 저장" })]),
+        el("div", { class: "block-head" }, [el("h2", { text: "추가 기록" }), el("span", { class: "eyebrow", text: "이 브라우저에 저장 · 프로젝트 링크·회고" })]),
         listBox
       ]),
       el("section", { class: "block" }, [
