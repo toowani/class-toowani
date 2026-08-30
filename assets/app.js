@@ -143,6 +143,40 @@
     SEM.courses.forEach(function (c) { if (c.weekMarks && c.weekMarks[w]) out.push(c.name + " " + c.weekMarks[w]); });
     return out.join(" · ");
   }
+  function mmdd(dateISO) { var d = parse(dateISO); return (d.getMonth() + 1) + "/" + d.getDate(); }
+
+  /* ── D-day 스트립 ─────────────────────── */
+  var DDAY_RE = /시험|고사|중간|기말|Midterm|Final|발표|마감/i;
+  function upcomingMarks() {
+    var out = [];
+    SEM.courses.forEach(function (c) {
+      if (!c.weekMarks) return;
+      var minDay = Math.min.apply(null, c.meetings.map(function (m) { return m.day; }));
+      Object.keys(c.weekMarks).forEach(function (wk) {
+        var label = c.weekMarks[wk];
+        if (!DDAY_RE.test(label)) return;
+        var date = addDays(weekStart(+wk), minDay - 1);
+        if (date < todayISO) return;
+        out.push({ course: c, week: +wk, label: label, date: date });
+      });
+    });
+    return out.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; }).slice(0, 4);
+  }
+  function ddayStrip() {
+    var items = upcomingMarks();
+    if (!items.length) return null;
+    var row = el("div", { class: "dday-strip" });
+    items.forEach(function (m) {
+      row.appendChild(el("a", {
+        class: "dday-chip", href: "#/c/" + m.course.id + "/w/" + m.week,
+        style: "color:" + m.course.color + ";border-color:" + m.course.color + ";background:" + m.course.color + "1A"
+      }, [
+        el("b", { text: "D-" + diffDays(todayISO, m.date) }),
+        document.createTextNode(" · " + m.course.name + " " + m.label + " (" + mmdd(m.date) + ")")
+      ]));
+    });
+    return row;
+  }
 
   /* ── 오늘 ─────────────────────────────── */
   function renderToday() {
@@ -205,7 +239,7 @@
       cg
     ]);
 
-    shell([hero, railBlock, todayBlock, reviewBlock(), courseBlock, todoDigest()]);
+    shell([hero, ddayStrip(), railBlock, todayBlock, reviewBlock(), courseBlock, todoDigest()]);
   }
 
   function nowMinutes() { var d = new Date(); return d.getHours() * 60 + d.getMinutes(); }

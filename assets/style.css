@@ -224,6 +224,15 @@ textarea.note::placeholder { color: var(--fg-dim); }
 .summary .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { font-family: var(--mono); font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--fg-mute); }
 
+/* D-day 스트립 */
+.dday-strip { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 0; }
+.dday-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 11.5px; padding: 6px 12px;
+  border: 1px solid currentColor; border-radius: 999px; text-decoration: none;
+}
+.dday-chip b { font-weight: 700; }
+
 /* 오디오 첨부 */
 .audio-list { display: flex; flex-direction: column; gap: 12px; }
 .audio-item { border-top: 1px solid var(--line); padding-top: 12px; }
