@@ -34,7 +34,7 @@
 (function () {
   var list = document.getElementById("list");
   document.getElementById("cnt").textContent = String(window.SEMESTERS.length).padStart(2, "0");
-  window.SEMESTERS.forEach(function (s) {
+  window.SEMESTERS.slice().reverse().forEach(function (s) {
     var a = document.createElement("a");
     a.className = "card sem-card" + (s.state === "current" ? " current" : "");
     a.href = s.id + "/";
