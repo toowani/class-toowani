@@ -105,6 +105,9 @@
     return renderToday();
   }
   window.addEventListener("hashchange", route);
+  window.addEventListener("beforeunload", function (e) {
+    if (rec && rec.active) { e.preventDefault(); e.returnValue = ""; }
+  });
 
   /* ── 공통 셸 ──────────────────────────── */
   function shell(nodes) {
@@ -494,13 +497,14 @@
       if (document.body.contains(scrim)) document.body.removeChild(scrim);
       document.body.style.overflow = "";
       document.removeEventListener("keydown", onKeydown);
+      if (elsewhereTimer) clearInterval(elsewhereTimer);
     }
     function forceClose() {
       if (rec && rec.active && rec.key === skey(s)) stopRec();
       teardown();
     }
     function close() {
-      if (rec && rec.active) { if (!confirm("녹음 중입니다. 중지하고 닫을까요?")) return; stopRec(); }
+      if (rec && rec.active) { if (!confirm("녹음 중입니다. 지금까지 녹음을 저장하고 닫을까요?")) return; stopRec(); }
       teardown();
       openModal = null;
       if (opts.onClose) opts.onClose();
@@ -528,11 +532,19 @@
     modal.appendChild(el("div", { class: "rec-bar", style: "margin:-6px 0 16px" }, [reviewedBtn]));
 
     /* 녹음 */
+    function recordingElsewhere() { return !!(rec && rec.key !== skey(s)); }
+    function startLabel() {
+      var dd = sdata(s);
+      return (dd.audios.length || (dd.transcript && dd.transcript.trim())) ? "● 이어서 녹음" : "● 녹음 시작";
+    }
+
     var statusEl = el("span", { class: "mono tiny dim", text: "" });
     var timerEl = el("span", { class: "mono", style: "font-size:20px", text: "00:00" });
+    var segmentEl = el("span", { class: "mono tiny dim", style: "display:none" });
     var live = el("span", { class: "pulse", style: "display:none" });
-    var startBtn = el("button", { class: "btn danger", text: "● 녹음 시작", onclick: start });
+    var startBtn = el("button", { class: "btn danger", text: startLabel(), onclick: start, disabled: recordingElsewhere() ? "disabled" : null });
     var stopBtn = el("button", { class: "btn", text: "■ 중지 후 요약", disabled: "disabled", onclick: stop });
+    var cancelBtn = el("button", { class: "ghost", style: "display:none", text: "✕ 취소", onclick: cancelRec });
     var starBtn = el("button", { class: "btn", style: "display:none", text: "★ 중요", onclick: markStar });
     var langSel = el("select", { class: "btn", style: "padding:8px 10px" }, [
       el("option", { value: "ko-KR", text: "받아쓰기 한국어" }),
@@ -541,12 +553,23 @@
     langSel.value = Store.get("lang/" + c.id, c.sttLang);
     langSel.addEventListener("change", function () { Store.set("lang/" + c.id, langSel.value); });
 
+    var elsewhereTimer = null;
+    if (recordingElsewhere()) {
+      statusEl.textContent = "다른 수업 녹음 중";
+      elsewhereTimer = setInterval(function () {
+        if (recordingElsewhere()) return;
+        startBtn.disabled = false;
+        statusEl.textContent = "";
+        clearInterval(elsewhereTimer); elsewhereTimer = null;
+      }, 400);
+    }
+
     var transcriptBox = el("div", { class: "transcript" });
     var audioSlot = el("div", { style: "margin-top:12px" });
     var summarySlot = el("div", { style: "margin-top:16px" });
 
     modal.appendChild(el("div", { class: "card", style: "margin-bottom:16px" }, [
-      el("div", { class: "rec-bar" }, [live, timerEl, startBtn, stopBtn, starBtn, langSel, statusEl]),
+      el("div", { class: "rec-bar" }, [live, timerEl, segmentEl, startBtn, stopBtn, cancelBtn, starBtn, langSel, statusEl]),
       transcriptBox, audioSlot, summarySlot
     ]));
 
@@ -554,6 +577,16 @@
       if (!(rec && rec.active && rec.key === skey(s))) return;
       rec.final += "\n[★ " + fmtSec(rec.sec) + "] ";
       drawTranscript();
+    }
+
+    function cancelRec() {
+      if (!(rec && rec.active && rec.key === skey(s))) return;
+      if (!confirm("이 녹음을 버릴까요? 저장되지 않습니다.")) return;
+      discardRec().then(function () {
+        live.style.display = "none"; startBtn.disabled = false; startBtn.textContent = startLabel();
+        stopBtn.disabled = true; cancelBtn.style.display = "none"; starBtn.style.display = "none"; segmentEl.style.display = "none";
+        drawTranscript();
+      });
     }
 
     /* 메모 */
@@ -646,12 +679,15 @@
     }
 
     function start() {
+      if (recordingElsewhere()) { statusEl.textContent = "다른 수업 녹음 중"; return; }
+      var segNum = countRecSegments(sdata(s).audios) + 1;
       startRec(s, langSel.value, {
         onTick: function (sec) { timerEl.textContent = fmtSec(sec); },
         onText: drawTranscript,
         onStatus: function (t) { statusEl.textContent = t; }
       }).then(function () {
-        live.style.display = ""; startBtn.disabled = true; stopBtn.disabled = false; starBtn.style.display = "";
+        live.style.display = ""; startBtn.disabled = true; stopBtn.disabled = false; cancelBtn.style.display = ""; starBtn.style.display = "";
+        segmentEl.style.display = ""; segmentEl.textContent = "누적 " + segNum + "번째 녹음";
         transcriptBox.style.padding = "14px"; transcriptBox.style.border = "1px solid var(--line)"; transcriptBox.style.maxHeight = "260px";
         drawTranscript();
       }).catch(function (e) {
@@ -660,7 +696,8 @@
     }
     function stop() {
       stopRec().then(function () {
-        live.style.display = "none"; startBtn.disabled = false; stopBtn.disabled = true; starBtn.style.display = "none";
+        live.style.display = "none"; startBtn.disabled = false; startBtn.textContent = startLabel();
+        stopBtn.disabled = true; cancelBtn.style.display = "none"; starBtn.style.display = "none"; segmentEl.style.display = "none";
         drawTranscript(); drawAudio();
         makeSummary(s, summarySlot, drawSummary);
       });
@@ -670,6 +707,10 @@
   function fmtSec(t) { return String(Math.floor(t / 60)).padStart(2, "0") + ":" + String(t % 60).padStart(2, "0"); }
 
   /* ── 녹음 + 받아쓰기 ──────────────────── */
+  function countRecSegments(audios) {
+    return audios.filter(function (a) { return /^녹음 \d+$/.test(a.label); }).length;
+  }
+
   function startRec(s, lang, cb) {
     return navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
       var chunks = [];
@@ -677,7 +718,8 @@
       mr.ondataavailable = function (e) { if (e.data.size) chunks.push(e.data); };
       mr.start(1000);
 
-      rec = { active: true, key: skey(s), s: s, mr: mr, chunks: chunks, stream: stream, final: sdata(s).transcript || "", interim: "", sec: 0, cb: cb, sr: null };
+      var baseTranscript = sdata(s).transcript || "";
+      rec = { active: true, key: skey(s), s: s, mr: mr, chunks: chunks, stream: stream, final: baseTranscript, baseTranscript: baseTranscript, interim: "", sec: 0, cb: cb, sr: null };
       if (rec.final && !/\n$/.test(rec.final)) rec.final += "\n";
       rec.timer = setInterval(function () { rec.sec++; cb.onTick(rec.sec); }, 1000);
 
@@ -716,7 +758,8 @@
         var id = r.key + "/rec-" + Date.now();
         AudioStore.put(id, blob).then(function () {
           var d = sdata(r.s);
-          ssave(r.s, { transcript: r.final.trim(), audios: d.audios.concat([{ id: id, label: "녹음", size: blob.size, at: new Date().toLocaleString("ko-KR") }]) });
+          var label = "녹음 " + (countRecSegments(d.audios) + 1);
+          ssave(r.s, { transcript: r.final.trim(), audios: d.audios.concat([{ id: id, label: label, size: blob.size, at: new Date().toLocaleString("ko-KR") }]) });
           rec = null; res();
         }).catch(function () {
           ssave(r.s, { transcript: r.final.trim() });
@@ -725,6 +768,24 @@
       };
       try { r.mr.stop(); } catch (x) { rec = null; res(); }
       r.stream.getTracks().forEach(function (t) { t.stop(); });
+    });
+  }
+
+  // 취소: MediaRecorder/SpeechRecognition/스트림/타이머만 정리하고 아무것도 저장하지 않음.
+  // 녹음 시작 전 transcript 스냅샷(baseTranscript)으로 되돌려 이번 세그먼트의 자막만 버림.
+  function discardRec() {
+    return new Promise(function (res) {
+      if (!rec) return res();
+      var r = rec; rec.active = false;
+      clearInterval(r.timer);
+      if (r.sr) { try { r.sr.stop(); } catch (x) {} }
+      r.mr.ondataavailable = null;
+      r.mr.onstop = null;
+      try { r.mr.stop(); } catch (x) {}
+      r.stream.getTracks().forEach(function (t) { t.stop(); });
+      ssave(r.s, { transcript: r.baseTranscript });
+      rec = null;
+      res();
     });
   }
 
