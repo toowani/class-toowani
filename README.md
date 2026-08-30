@@ -56,3 +56,32 @@ GitHub Pages든 Cloudflare Pages든 이 폴더를 그대로 올리면 `class.too
 
 강의 녹음은 개인 학습용으로만. 교수님 방침이나 LMS 공지에 녹음 관련 안내가 있는지 먼저 확인하고,
 녹음 파일을 외부에 공유하지 않는 편이 안전합니다.
+
+## 배포 방법 (Cloudflare Pages)
+
+이 저장소는 GitHub `toowani/class-toowani` (private)에 올라가 있고, Cloudflare Pages 프로젝트
+`class-toowani`로 배포합니다. 빌드 단계가 없으므로 저장소 루트를 그대로 업로드하면 됩니다.
+
+```
+npx wrangler login                               # 최초 1회, 브라우저 인증
+npx wrangler pages project create class-toowani  # 최초 1회, 프로젝트 생성
+npx wrangler pages deploy . --project-name=class-toowani
+```
+
+배포할 때마다 임시 미리보기 주소(`https://<hash>.class-toowani.pages.dev`)가 생기고,
+`main` 브랜치 배포는 `https://class-toowani.pages.dev`로도 접근됩니다.
+
+### 커스텀 도메인(class.toowani.com) 연결
+
+1. [Cloudflare 대시보드](https://dash.cloudflare.com) → 계정 선택 → **Workers & Pages**
+2. `class-toowani` 프로젝트 클릭
+3. 상단 탭에서 **Custom domains** 클릭
+4. **Set up a custom domain** 버튼 클릭 → `class.toowani.com` 입력 → **Continue**
+5. `toowani.com` 도메인이 같은 Cloudflare 계정에 있으면 DNS 레코드가 자동으로 추가됨(Activate 클릭으로 완료).
+   다른 계정/등록기관이면 안내되는 CNAME 레코드(`class` → `class-toowani.pages.dev`)를 해당 DNS에서 직접 추가
+6. DNS가 전파되면 (보통 몇 분) `https://class.toowani.com`으로 접속 가능. 인증서는 Cloudflare가 자동 발급
+
+### GitHub 자동 배포로 전환하려면
+
+현재는 `wrangler pages deploy`로 수동 배포합니다. 커밋마다 자동 배포하고 싶으면 Cloudflare 대시보드의
+Pages 프로젝트 설정에서 **Git 연결(Connect to Git)**을 통해 `toowani/class-toowani` 저장소를 연결하면 됩니다.
