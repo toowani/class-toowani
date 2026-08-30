@@ -64,9 +64,10 @@
     if (!Array.isArray(d.audios)) {
       d.audios = d.audio ? [{ id: d.audio, label: "녹음", size: null, at: null }] : [];
     }
+    if (typeof d.reviewed !== "boolean") d.reviewed = false;
     return d;
   }
-  function sdata(s) { return normalizeSession(Store.get(skey(s), { note: "", transcript: "", summary: null, audio: null, audios: [] })); }
+  function sdata(s) { return normalizeSession(Store.get(skey(s), { note: "", transcript: "", summary: null, audio: null, audios: [], reviewed: false })); }
   function ssave(s, patch) {
     var d = sdata(s); Object.keys(patch).forEach(function (k) { d[k] = patch[k]; });
     Store.set(skey(s), d); return d;
@@ -204,7 +205,7 @@
       cg
     ]);
 
-    shell([hero, railBlock, todayBlock, courseBlock, todoDigest()]);
+    shell([hero, railBlock, todayBlock, reviewBlock(), courseBlock, todoDigest()]);
   }
 
   function nowMinutes() { var d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
@@ -224,6 +225,37 @@
       el("div", { class: "tiny dim mono", style: "margin-top:4px", text: c.meetings.map(function (m) { return DAYS[m.day] + " " + m.start; }).join("  ") }),
       el("div", { class: "small mute", style: "margin-top:10px;min-height:38px", text: (w >= 1 && w <= SEM.weeks) ? (c.weekTopics[w - 1] || "") : c.en }),
       bars, key
+    ]);
+  }
+
+  /* ── 복습 큐 ──────────────────────────── */
+  function reviewQueue() {
+    var out = [];
+    SEM.courses.forEach(function (c) {
+      sessionsOf(c).forEach(function (s) {
+        if (s.date >= todayISO) return;
+        var d = sdata(s);
+        if (hasContent(d) && !d.reviewed) out.push(s);
+      });
+    });
+    return out.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; }).slice(0, 5);
+  }
+  function reviewBlock() {
+    var items = reviewQueue();
+    var box = el("div", { class: "card" });
+    if (!items.length) {
+      box.appendChild(el("div", { class: "small dim", text: "복습할 게 없습니다." }));
+    } else {
+      items.forEach(function (s) {
+        box.appendChild(el("a", { class: "todo", href: "#/c/" + s.course.id + "/w/" + s.week }, [
+          el("span", { class: "tiny mono", style: "color:" + s.course.color + ";width:96px;flex:none", text: s.course.name }),
+          el("label", { text: pretty(s.date) + " 수업 · D+" + diffDays(s.date, todayISO) + "일 전" })
+        ]));
+      });
+    }
+    return el("section", { class: "block" }, [
+      el("div", { class: "block-head" }, [el("h2", { text: "복습할 것" }), el("span", { class: "eyebrow", text: "기록 있는데 아직 복습 안 한 것" })]),
+      box
     ]);
   }
 
@@ -418,6 +450,15 @@
       ]),
       el("button", { class: "ghost", text: "닫기 ✕", onclick: close })
     ]));
+
+    var reviewedBtn = el("button", { class: "btn" + (d.reviewed ? " primary" : ""), text: d.reviewed ? "복습 완료 ✓" : "복습 완료로 표시", onclick: toggleReviewed });
+    function toggleReviewed() {
+      var next = !sdata(s).reviewed;
+      ssave(s, { reviewed: next });
+      reviewedBtn.textContent = next ? "복습 완료 ✓" : "복습 완료로 표시";
+      reviewedBtn.className = "btn" + (next ? " primary" : "");
+    }
+    modal.appendChild(el("div", { class: "rec-bar", style: "margin:-6px 0 16px" }, [reviewedBtn]));
 
     /* 녹음 */
     var statusEl = el("span", { class: "mono tiny dim", text: "" });
