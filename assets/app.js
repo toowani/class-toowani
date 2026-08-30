@@ -88,9 +88,17 @@
     if (links[1]) links[1].className = isTT ? "on" : "";
   }
 
+  var openModal = null;
+  function closeOpenModal() {
+    if (!openModal) return;
+    var m = openModal; openModal = null;
+    m.forceClose();
+  }
+
   function route() {
     var h = location.hash.replace(/^#\/?/, "").split("/");
     syncNav();
+    closeOpenModal();
     if (!SEM) return renderArchive();
     if (h[0] === "c" && h[1]) return renderCourse(h[1], h[2] === "w" ? +h[3] : null);
     if (h[0] === "tt") return renderTimetable();
@@ -375,6 +383,7 @@
   function renderCourse(cid, openWeek) {
     var c = course(cid);
     if (!c) { location.hash = "#/"; return; }
+    if (openWeek) history.replaceState(null, "", "#/c/" + cid);
     var w = weekOf(todayISO);
     var total = c.grading.reduce(function (a, g) { return a + g[1]; }, 0);
     var bars = el("div", { class: "bars" }), key = el("div", { class: "bar-key" });
@@ -436,7 +445,7 @@
     if (openWeek) {
       var target = sessionsOf(c).filter(function (s) { return s.week === openWeek; });
       var pick = target.filter(function (s) { return s.date >= todayISO; })[0] || target[0];
-      if (pick) openSession(pick, { hashDriven: true });
+      if (pick) openSession(pick, { onClose: drawList });
     }
   }
 
@@ -481,20 +490,24 @@
     var modal = el("div", { class: "modal", style: "color:" + c.color });
     scrim.appendChild(modal); document.body.appendChild(scrim);
     document.body.style.overflow = "hidden";
+    function teardown() {
+      if (document.body.contains(scrim)) document.body.removeChild(scrim);
+      document.body.style.overflow = "";
+      document.removeEventListener("keydown", onKeydown);
+    }
+    function forceClose() {
+      if (rec && rec.active && rec.key === skey(s)) stopRec();
+      teardown();
+    }
     function close() {
       if (rec && rec.active) { if (!confirm("녹음 중입니다. 중지하고 닫을까요?")) return; stopRec(); }
-      document.body.removeChild(scrim); document.body.style.overflow = "";
-      document.removeEventListener("keydown", onKeydown);
-      if (opts.hashDriven) {
-        var target = "#/c/" + c.id;
-        if (location.hash === target) route();
-        else location.hash = target;
-      } else if (opts.onClose) {
-        opts.onClose();
-      }
+      teardown();
+      openModal = null;
+      if (opts.onClose) opts.onClose();
     }
     function onKeydown(e) { if (e.key === "Escape" && document.body.contains(scrim)) close(); }
     document.addEventListener("keydown", onKeydown);
+    openModal = { forceClose: forceClose };
 
     modal.appendChild(el("div", { class: "modal-head" }, [
       el("div", {}, [
