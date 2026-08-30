@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>class.toowani — 수업 기록</title>
+<meta name="description" content="김창완의 학부 수업 기록. 학기별 진도·녹음·요약·회고.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="top"><div class="top-in">
+  <a class="mark" href="./">class<span>.toowani.com</span></a>
+  <nav><a href="https://toowani.com">toowani.com</a></nav>
+</div></header>
+
+<main class="wrap" id="app">
+  <section class="hero">
+    <div>
+      <p class="eyebrow">GIST · 전기전자컴퓨터공학부</p>
+      <h1>수업 기록</h1>
+      <p class="mute" style="margin-top:12px;max-width:52ch">1학년 1학기부터 지금까지. 지난 학기는 결과만, 진행 중인 학기는 녹음·요약·메모까지.</p>
+    </div>
+    <div class="hero-week"><i>semesters</i><b id="cnt">08</b></div>
+  </section>
+
+  <section class="block">
+    <div class="block-head"><h2>학기</h2><span class="eyebrow">진행 중 = 초록</span></div>
+    <div class="grid" id="list"></div>
+  </section>
+</main>
+
+<script src="assets/data.js"></script>
+<script>
+(function () {
+  var list = document.getElementById("list");
+  document.getElementById("cnt").textContent = String(window.SEMESTERS.length).padStart(2, "0");
+  window.SEMESTERS.forEach(function (s) {
+    var a = document.createElement("a");
+    a.className = "card sem-card" + (s.state === "current" ? " current" : "");
+    a.href = s.id + "/";
+    a.innerHTML =
+      '<span class="id">' + s.id + '</span>' +
+      '<span><b>' + s.label + '</b>' +
+      '<span class="tiny dim mono" style="display:block">' +
+        (s.state === "current" ? "녹음 · 요약 · 메모" : (s.season ? "계절학기 · 직접 추가" : "결과 · 프로젝트 · 회고")) +
+      '</span></span>' +
+      '<span class="badge' + (s.state === "current" ? " live" : "") + '">' + (s.state === "current" ? "진행 중" : "종료") + '</span>';
+    list.appendChild(a);
+  });
+})();
+</script>
+</body>
+</html>
