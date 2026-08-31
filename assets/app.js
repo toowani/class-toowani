@@ -65,9 +65,10 @@
       d.audios = d.audio ? [{ id: d.audio, label: "녹음", size: null, at: null }] : [];
     }
     if (typeof d.reviewed !== "boolean") d.reviewed = false;
+    if (!Array.isArray(d.pending)) d.pending = [];
     return d;
   }
-  function sdata(s) { return normalizeSession(Store.get(skey(s), { note: "", transcript: "", summary: null, audio: null, audios: [], reviewed: false })); }
+  function sdata(s) { return normalizeSession(Store.get(skey(s), { note: "", transcript: "", summary: null, audio: null, audios: [], reviewed: false, pending: [] })); }
   function ssave(s, patch) {
     var d = sdata(s); Object.keys(patch).forEach(function (k) { d[k] = patch[k]; });
     Store.set(skey(s), d); return d;
@@ -195,6 +196,67 @@
     return row;
   }
 
+  /* ── 이월된 받아쓰기(예산 초과분) ─────── */
+  function allSessionKeys() {
+    var prefix = "s/" + SEM_ID + "/";
+    return Store.keys().filter(function (k) { return k.indexOf(prefix) === 0; });
+  }
+  function keyToSessionInfo(k) {
+    var parts = k.split("/"); // s / SEM_ID / courseId / date / start
+    var c = course(parts[2]);
+    if (!c) return null;
+    var date = parts[3], start = parts[4];
+    var m = c.meetings.filter(function (mm) { return mm.start === start; })[0] || c.meetings[0];
+    return { course: c, date: date, m: m, week: weekOf(date) };
+  }
+  function findDueCarryover() {
+    var now = new Date();
+    var out = [];
+    allSessionKeys().forEach(function (k) {
+      var d = Store.get(k, null);
+      if (!d || !d.pending || !d.pending.length) return;
+      var due = d.pending.some(function (p) { return p.status === "carryover" && (!p.resetAt || new Date(p.resetAt) <= now); });
+      if (due) { var info = keyToSessionInfo(k); if (info) out.push(info); }
+    });
+    return out;
+  }
+  var carryoverInFlight = false;
+  function carryoverBanner() {
+    var due = findDueCarryover();
+    if (!due.length && !carryoverInFlight) return null;
+    var box = el("div", { class: "card" });
+    if (carryoverInFlight) {
+      box.appendChild(el("div", { class: "rec-bar" }, [el("span", { class: "small", text: "이월된 받아쓰기 처리 중…" })]));
+      return el("section", { class: "block" }, [el("div", { class: "block-head" }, [el("h2", { text: "이월된 받아쓰기" })]), box]);
+    }
+    carryoverInFlight = true;
+    box.appendChild(el("div", { class: "rec-bar" }, [el("span", { class: "small", text: "이월된 받아쓰기 처리 중… (" + due.length + "개 수업)" })]));
+    var chain = Promise.resolve();
+    var done = [];
+    due.forEach(function (info) {
+      var s = { course: info.course, date: info.date, m: info.m, week: info.week };
+      chain = chain.then(function () {
+        return resolvePendingForSession(s).then(function (r) { if (r.resolved > 0) done.push(info); });
+      });
+    });
+    chain.then(function () {
+      carryoverInFlight = false;
+      box.innerHTML = "";
+      if (!done.length) { box.appendChild(el("div", { class: "small dim", text: "지금은 처리할 수 있는 이월 조각이 없었습니다." })); return; }
+      box.appendChild(el("div", { class: "rec-bar" }, [el("b", { text: "이월된 받아쓰기 " + done.length + "개 완료" })]));
+      done.forEach(function (info) {
+        box.appendChild(el("a", { class: "todo", href: "#/c/" + info.course.id + "/w/" + info.week }, [
+          el("span", { class: "tiny mono", style: "color:" + info.course.color + ";width:96px;flex:none", text: info.course.name }),
+          el("label", { text: "W" + String(info.week).padStart(2, "0") + " · 요약 다시 만들기 →" })
+        ]));
+      });
+    });
+    return el("section", { class: "block" }, [
+      el("div", { class: "block-head" }, [el("h2", { text: "이월된 받아쓰기" })]),
+      box
+    ]);
+  }
+
   /* ── 오늘 ─────────────────────────────── */
   function renderToday() {
     var w = weekOf(todayISO);
@@ -256,7 +318,7 @@
       cg
     ]);
 
-    shell([hero, ddayStrip(), railBlock, todayBlock, reviewBlock(), courseBlock, todoDigest()]);
+    shell([hero, ddayStrip(), carryoverBanner(), railBlock, todayBlock, reviewBlock(), courseBlock, todoDigest()]);
   }
 
   function nowMinutes() { var d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
@@ -511,7 +573,7 @@
     }
     function onKeydown(e) { if (e.key === "Escape" && document.body.contains(scrim)) close(); }
     document.addEventListener("keydown", onKeydown);
-    openModal = { forceClose: forceClose };
+    openModal = { forceClose: forceClose, key: skey(s), redraw: function () { drawTranscript(); } };
 
     modal.appendChild(el("div", { class: "modal-head" }, [
       el("div", {}, [
@@ -541,6 +603,7 @@
     var statusEl = el("span", { class: "mono tiny dim", text: "" });
     var timerEl = el("span", { class: "mono", style: "font-size:20px", text: "00:00" });
     var segmentEl = el("span", { class: "mono tiny dim", style: "display:none" });
+    var chunkEl = el("span", { class: "mono tiny dim", style: "display:none" });
     var live = el("span", { class: "pulse", style: "display:none" });
     var startBtn = el("button", { class: "btn danger", text: startLabel(), onclick: start, disabled: recordingElsewhere() ? "disabled" : null });
     var stopBtn = el("button", { class: "btn", text: "■ 중지 후 요약", disabled: "disabled", onclick: stop });
@@ -550,8 +613,39 @@
       el("option", { value: "ko-KR", text: "받아쓰기 한국어" }),
       el("option", { value: "en-US", text: "받아쓰기 English" })
     ]);
-    langSel.value = Store.get("lang/" + c.id, c.sttLang);
-    langSel.addEventListener("change", function () { Store.set("lang/" + c.id, langSel.value); });
+    var noTranscribeLabel = el("span", { class: "tiny dim", style: "display:none", text: "이 과목은 받아쓰기 안 함" });
+    var pendingBtn = el("button", { class: "ghost", style: "display:none", onclick: processPendingNow });
+    if (c.transcribe === false) {
+      langSel.style.display = "none";
+      noTranscribeLabel.style.display = "";
+    } else {
+      langSel.value = Store.get("lang/" + c.id, c.sttLang);
+      langSel.addEventListener("change", function () { Store.set("lang/" + c.id, langSel.value); });
+    }
+
+    function refreshPendingUI() {
+      var n = (sdata(s).pending || []).length;
+      pendingBtn.style.display = n ? "" : "none";
+      pendingBtn.disabled = false;
+      pendingBtn.title = "";
+      pendingBtn.textContent = "대기 조각 지금 처리 (" + n + ")";
+      if (!n) return;
+      var ue = usageEndpoint();
+      if (!ue) return;
+      fetch(ue).then(function (r) { return r.json(); }).then(function (u) {
+        if (u && typeof u.remainingSeconds === "number" && u.remainingSeconds <= 0) {
+          pendingBtn.disabled = true;
+          pendingBtn.title = "오늘 예산 소진 — " + fmtResetKST(u.resetAt) + " 이후 다시 시도";
+        }
+      }).catch(function () {});
+    }
+    function processPendingNow() {
+      pendingBtn.disabled = true; pendingBtn.textContent = "처리 중…";
+      resolvePendingForSession(s).then(function () {
+        drawTranscript();
+        refreshPendingUI();
+      });
+    }
 
     var elsewhereTimer = null;
     if (recordingElsewhere()) {
@@ -574,7 +668,7 @@
     var summarySlot = el("div", { style: "margin-top:16px" });
 
     modal.appendChild(el("div", { class: "card", style: "margin-bottom:16px" }, [
-      el("div", { class: "rec-bar" }, [live, timerEl, segmentEl, startBtn, stopBtn, cancelBtn, starBtn, langSel, statusEl]),
+      el("div", { class: "rec-bar" }, [live, timerEl, segmentEl, chunkEl, startBtn, stopBtn, cancelBtn, starBtn, langSel, noTranscribeLabel, pendingBtn, statusEl]),
       transcriptHead, transcriptBox, audioSlot, summarySlot
     ]));
 
@@ -598,6 +692,7 @@
       discardRec().then(function () {
         live.style.display = "none"; startBtn.disabled = false; startBtn.textContent = startLabel();
         stopBtn.disabled = true; cancelBtn.style.display = "none"; starBtn.style.display = "none"; segmentEl.style.display = "none";
+        chunkEl.style.display = "none";
         clearTranscriptBtn.style.display = "";
         drawTranscript();
       });
@@ -615,7 +710,7 @@
     modal.appendChild(el("div", { class: "block-head", style: "margin-top:8px" }, [el("h2", { text: "메모" }), noteState]));
     modal.appendChild(note);
 
-    drawTranscript(); drawAudio(); drawSummary();
+    drawTranscript(); drawAudio(); drawSummary(); refreshPendingUI();
 
     function drawTranscript() {
       transcriptBox.innerHTML = "";
@@ -644,7 +739,7 @@
           if (!blob) return;
           var url = URL.createObjectURL(blob);
           row.appendChild(el("audio", { controls: "controls", src: url, style: "width:100%;margin-top:6px" }));
-          row.appendChild(el("div", { class: "rec-bar", style: "margin-top:8px" }, [
+          var actions = [
             el("a", { class: "btn", href: url, download: c.id + "-" + s.date + "-" + (a.label || "audio") + ".webm", text: "↓ 저장" }),
             el("button", { class: "ghost", text: "삭제", onclick: function () {
               if (!confirm("이 오디오를 지울까요?")) return;
@@ -653,7 +748,11 @@
               ssave(s, { audios: dd2.audios.filter(function (x) { return x.id !== a.id; }) });
               drawAudio();
             } })
-          ]));
+          ];
+          if (a.id.indexOf("/upload/") >= 0) {
+            actions.push(el("button", { class: "ghost", text: "받아쓰기", onclick: function () { transcribeUploadedAudio(s, a, row); } }));
+          }
+          row.appendChild(el("div", { class: "rec-bar", style: "margin-top:8px" }, actions));
         });
         listEl.appendChild(row);
       });
@@ -698,7 +797,12 @@
       startRec(s, langSel.value, {
         onTick: function (sec) { timerEl.textContent = fmtSec(sec); },
         onText: drawTranscript,
-        onStatus: function (t) { statusEl.textContent = t; }
+        onStatus: function (t) { statusEl.textContent = t; },
+        onChunkProgress: function (doneN, total) {
+          if (!total) { chunkEl.style.display = "none"; return; }
+          chunkEl.style.display = "";
+          chunkEl.textContent = "받아쓰기 " + doneN + "/" + total + " 조각 완료";
+        }
       }).then(function () {
         live.style.display = ""; startBtn.disabled = true; stopBtn.disabled = false; cancelBtn.style.display = ""; starBtn.style.display = "";
         segmentEl.style.display = ""; segmentEl.textContent = "누적 " + segNum + "번째 녹음"; clearTranscriptBtn.style.display = "none";
@@ -712,8 +816,9 @@
       stopRec().then(function () {
         live.style.display = "none"; startBtn.disabled = false; startBtn.textContent = startLabel();
         stopBtn.disabled = true; cancelBtn.style.display = "none"; starBtn.style.display = "none"; segmentEl.style.display = "none";
+        chunkEl.style.display = "none";
         clearTranscriptBtn.style.display = "";
-        drawTranscript(); drawAudio();
+        drawTranscript(); drawAudio(); refreshPendingUI();
         makeSummary(s, summarySlot, drawSummary);
       });
     }
@@ -726,39 +831,133 @@
     return audios.filter(function (a) { return /^녹음 \d+$/.test(a.label); }).length;
   }
 
+  var ROTATE_MS = 5 * 60 * 1000; // 조각 회전 주기(5분) — 배포 후 실측(5분·32kbps opus 1.84MB 성공)으로 확정
+  var B_BITRATE = 32000;         // mono 32kbps
+
+  function pickMime() {
+    var cands = ["audio/webm;codecs=opus", "audio/webm"];
+    for (var i = 0; i < cands.length; i++) {
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(cands[i])) return cands[i];
+    }
+    return "";
+  }
+
   function startRec(s, lang, cb) {
+    var transcribeAllowed = s.course.transcribe !== false;
     return navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
-      var chunks = [];
-      var mr = new MediaRecorder(stream);
-      mr.ondataavailable = function (e) { if (e.data.size) chunks.push(e.data); };
-      mr.start(1000);
+      var chunksA = [];
+      var mrA = new MediaRecorder(stream);
+      mrA.ondataavailable = function (e) { if (e.data.size) chunksA.push(e.data); };
+      mrA.start(1000);
 
       var baseTranscript = sdata(s).transcript || "";
-      rec = { active: true, key: skey(s), s: s, mr: mr, chunks: chunks, stream: stream, final: baseTranscript, baseTranscript: baseTranscript, interim: "", sec: 0, cb: cb, sr: null };
+      rec = {
+        active: true, cancelled: false, key: skey(s), s: s,
+        mrA: mrA, chunksA: chunksA, stream: stream,
+        final: baseTranscript, baseTranscript: baseTranscript, interim: "",
+        sec: 0, cb: cb, lang: lang,
+        seq: 0, chunksTotal: 0, chunksDone: 0, queue: Promise.resolve(),
+        mrB: null, chunksB: [], chunkStart: 0, monoStream: null, audioCtx: null, rotateTimer: null,
+        transcribeEnabled: transcribeAllowed && !!sttEndpoint()
+      };
       if (rec.final && !/\n$/.test(rec.final)) rec.final += "\n";
       rec.timer = setInterval(function () { rec.sec++; cb.onTick(rec.sec); }, 1000);
 
-      var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (SR) {
-        var sr = new SR();
-        sr.lang = lang; sr.continuous = true; sr.interimResults = true;
-        sr.onresult = function (e) {
-          var interim = "";
-          for (var i = e.resultIndex; i < e.results.length; i++) {
-            var r = e.results[i];
-            if (r.isFinal) rec.final += r[0].transcript.trim() + " ";
-            else interim += r[0].transcript;
-          }
-          rec.interim = interim;
-          cb.onText();
-        };
-        sr.onerror = function (e) { cb.onStatus("받아쓰기: " + e.error); };
-        sr.onend = function () { if (rec && rec.active) { try { sr.start(); } catch (x) {} } };
-        try { sr.start(); rec.sr = sr; cb.onStatus("녹음 + 받아쓰기 중"); }
-        catch (x) { cb.onStatus("녹음 중 (받아쓰기 실패)"); }
+      if (rec.transcribeEnabled) {
+        try {
+          var AC = window.AudioContext || window.webkitAudioContext;
+          var actx = new AC();
+          var src = actx.createMediaStreamSource(stream);
+          var dest = actx.createMediaStreamDestination();
+          dest.channelCount = 1; dest.channelCountMode = "explicit";
+          src.connect(dest);
+          rec.audioCtx = actx; rec.monoStream = dest.stream;
+          startNewB(rec);
+          rec.rotateTimer = setInterval(function () { rotateB(rec); }, ROTATE_MS);
+          cb.onStatus("녹음 + 받아쓰기 중 (" + Math.round(ROTATE_MS / 1000) + "초 조각)");
+        } catch (x) {
+          rec.transcribeEnabled = false;
+          cb.onStatus("녹음 중 (받아쓰기 초기화 실패: " + (x && x.message ? x.message : x) + ")");
+        }
+      } else if (!transcribeAllowed) {
+        cb.onStatus("녹음 중 · 이 과목은 받아쓰기 안 함");
       } else {
-        cb.onStatus("녹음 중 · 받아쓰기는 Chrome/Edge에서 지원");
+        cb.onStatus("녹음 중 · 받아쓰기 API 주소가 없어 자막은 쌓이지 않습니다");
       }
+    });
+  }
+
+  function startNewB(r) {
+    var mime = pickMime();
+    var mr = mime ? new MediaRecorder(r.monoStream, { mimeType: mime, audioBitsPerSecond: B_BITRATE })
+                  : new MediaRecorder(r.monoStream, { audioBitsPerSecond: B_BITRATE });
+    r.chunksB = [];
+    mr.ondataavailable = function (e) { if (e.data.size) r.chunksB.push(e.data); };
+    mr.start(1000);
+    r.mrB = mr;
+    r.chunkStart = Date.now();
+  }
+
+  // 회전: 지금 조각을 마감해 큐에 올리고, 이어서 새 인스턴스로 계속 녹음(타임슬라이스만으로는
+  // WebM 헤더가 첫 조각에만 있어 독립 재생이 안 되므로 반드시 인스턴스를 교체한다).
+  function rotateB(r) {
+    if (!r.mrB || !r.active) return;
+    var oldMr = r.mrB, oldChunks = r.chunksB;
+    var dur = (Date.now() - r.chunkStart) / 1000;
+    oldMr.onstop = function () {
+      enqueueChunk(r, new Blob(oldChunks, { type: oldMr.mimeType || "audio/webm" }), dur);
+      if (r.active) startNewB(r);
+    };
+    try { oldMr.stop(); } catch (x) { if (r.active) startNewB(r); }
+  }
+
+  // 중지 시 현재 진행 중인 마지막 조각을 마감(회전과 동일하지만 재시작은 하지 않음)
+  function finishCurrentChunk(r) {
+    return new Promise(function (resolve) {
+      if (!r.mrB) return resolve();
+      var mrB = r.mrB, chunks = r.chunksB;
+      var dur = (Date.now() - r.chunkStart) / 1000;
+      mrB.onstop = function () { enqueueChunk(r, new Blob(chunks, { type: mrB.mimeType || "audio/webm" }), dur); resolve(); };
+      try { mrB.stop(); } catch (x) { resolve(); }
+    });
+  }
+
+  // 조각을 큐에 순서대로(단일 흐름) 태워 보낸다 — 응답이 어떤 순서로 와도 처리 자체가
+  // 순차적이라 transcript에 삽입되는 순서는 항상 조각 생성 순서와 같다.
+  function enqueueChunk(r, blob, duration) {
+    if (r.cancelled || !(duration > 1)) return;
+    r.seq++;
+    var seq = r.seq;
+    r.chunksTotal++;
+    r.cb.onChunkProgress(r.chunksDone, r.chunksTotal);
+    var placeholder = "…(" + seq + "번째 조각 처리 중)";
+    r.final = (r.final.replace(/\s+$/, "")) + " " + placeholder + " ";
+    r.cb.onText();
+    r.queue = r.queue.then(function () {
+      if (r.cancelled) return;
+      return sendChunkWithRetry({ blob: blob, duration: duration, lang: (r.lang || "").slice(0, 2) })
+        .then(function (data) {
+          if (r.cancelled) return;
+          r.final = replacePlaceholder(r.final, placeholder, (data.text || "").trim() || "(무음)");
+        })
+        .catch(function (e) {
+          if (r.cancelled) return;
+          var text;
+          if (e && e.budget) {
+            text = "[이월 대기: " + seq + "번째 조각, " + fmtResetKST(e.resetAt) + " 이후 처리]";
+            persistPending(r.s, { seq: seq, status: "carryover", placeholder: text, blob: blob, duration: duration, lang: (r.lang || "").slice(0, 2), resetAt: e.resetAt });
+          } else {
+            text = "[" + seq + "번째 조각 실패]";
+            persistPending(r.s, { seq: seq, status: "failed", placeholder: text, blob: blob, duration: duration, lang: (r.lang || "").slice(0, 2), resetAt: null });
+          }
+          r.final = replacePlaceholder(r.final, placeholder, text);
+        })
+        .then(function () {
+          if (r.cancelled) return;
+          r.chunksDone++;
+          r.cb.onChunkProgress(r.chunksDone, r.chunksTotal);
+          r.cb.onText();
+        });
     });
   }
 
@@ -767,41 +966,260 @@
       if (!rec) return res();
       var r = rec; rec.active = false;
       clearInterval(r.timer);
-      if (r.sr) { try { r.sr.stop(); } catch (x) {} }
-      r.mr.onstop = function () {
-        var blob = new Blob(r.chunks, { type: r.mr.mimeType || "audio/webm" });
-        var id = r.key + "/rec-" + Date.now();
-        AudioStore.put(id, blob).then(function () {
-          var d = sdata(r.s);
+      if (r.rotateTimer) clearInterval(r.rotateTimer);
+
+      var pFinishB = finishCurrentChunk(r);
+      var pFinishA = new Promise(function (resA) {
+        r.mrA.onstop = function () {
+          var blob = new Blob(r.chunksA, { type: r.mrA.mimeType || "audio/webm" });
+          var id = r.key + "/rec-" + Date.now();
+          AudioStore.put(id, blob).then(function () { resA({ id: id, size: blob.size }); }).catch(function () { resA(null); });
+        };
+        try { r.mrA.stop(); } catch (x) { resA(null); }
+      });
+
+      Promise.all([pFinishB, pFinishA]).then(function (results) {
+        return r.queue.then(function () { return results[1]; });
+      }).then(function (audioResult) {
+        var d = sdata(r.s);
+        var patch = { transcript: r.final.trim() };
+        if (audioResult) {
           var label = "녹음 " + (countRecSegments(d.audios) + 1);
-          ssave(r.s, { transcript: r.final.trim(), audios: d.audios.concat([{ id: id, label: label, size: blob.size, at: new Date().toLocaleString("ko-KR") }]) });
-          rec = null; res();
-        }).catch(function () {
-          ssave(r.s, { transcript: r.final.trim() });
-          rec = null; res();
-        });
-      };
-      try { r.mr.stop(); } catch (x) { rec = null; res(); }
-      r.stream.getTracks().forEach(function (t) { t.stop(); });
+          patch.audios = d.audios.concat([{ id: audioResult.id, label: label, size: audioResult.size, at: new Date().toLocaleString("ko-KR") }]);
+        }
+        ssave(r.s, patch);
+        r.stream.getTracks().forEach(function (t) { t.stop(); });
+        if (r.audioCtx) { try { r.audioCtx.close(); } catch (x) {} }
+        rec = null; res();
+      });
     });
   }
 
-  // 취소: MediaRecorder/SpeechRecognition/스트림/타이머만 정리하고 아무것도 저장하지 않음.
-  // 녹음 시작 전 transcript 스냅샷(baseTranscript)으로 되돌려 이번 세그먼트의 자막만 버림.
+  // 취소: MediaRecorder/스트림/타이머만 정리하고 아무것도 저장하지 않음. 이미 전송 중인
+  // 조각 요청은 r.cancelled 플래그로 결과만 무시한다(네트워크 요청 자체를 끊지는 않음).
+  // 녹음 시작 전 transcript 스냅샷(baseTranscript)으로 되돌려 이번 세그먼트의 자막만 버린다.
   function discardRec() {
     return new Promise(function (res) {
       if (!rec) return res();
-      var r = rec; rec.active = false;
+      var r = rec; rec.active = false; r.cancelled = true;
       clearInterval(r.timer);
-      if (r.sr) { try { r.sr.stop(); } catch (x) {} }
-      r.mr.ondataavailable = null;
-      r.mr.onstop = null;
-      try { r.mr.stop(); } catch (x) {}
+      if (r.rotateTimer) clearInterval(r.rotateTimer);
+      r.mrA.ondataavailable = null; r.mrA.onstop = null;
+      try { r.mrA.stop(); } catch (x) {}
+      if (r.mrB) { r.mrB.ondataavailable = null; r.mrB.onstop = null; try { r.mrB.stop(); } catch (x) {} }
       r.stream.getTracks().forEach(function (t) { t.stop(); });
+      if (r.audioCtx) { try { r.audioCtx.close(); } catch (x) {} }
       ssave(r.s, { transcript: r.baseTranscript });
       rec = null;
       res();
     });
+  }
+
+  function replacePlaceholder(text, marker, replacement) {
+    var idx = text.indexOf(marker);
+    if (idx < 0) return text.replace(/\s+$/, "") + " " + replacement;
+    return text.slice(0, idx) + replacement + text.slice(idx + marker.length);
+  }
+
+  function fmtResetKST(resetAtISO) {
+    if (!resetAtISO) return "다음 초기화";
+    try {
+      var d = new Date(resetAtISO);
+      return d.toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Seoul" }) + " KST";
+    } catch (e) { return "다음 초기화"; }
+  }
+
+  /* ── 받아쓰기 API 호출 ────────────────── */
+  function sttEndpoint() {
+    var cfg = Store.get("ai", {});
+    if (cfg.sttUrl && cfg.sttUrl.trim()) return cfg.sttUrl.trim();
+    if (!cfg.url) return null;
+    try { return new URL(cfg.url, location.href).origin + "/transcribe"; } catch (e) { return null; }
+  }
+  function usageEndpoint() {
+    var t = sttEndpoint();
+    return t ? t.replace(/\/transcribe\/?$/, "/usage") : null;
+  }
+  function sendChunkToServer(payload) {
+    var endpoint = sttEndpoint();
+    if (!endpoint) return Promise.reject(new Error("받아쓰기 API 주소 없음"));
+    return fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "content-type": (payload.blob && payload.blob.type) || "audio/webm",
+        "x-language": payload.lang || "",
+        "x-duration-sec": String(payload.duration)
+      },
+      body: payload.blob
+    }).then(function (r) {
+      if (r.status === 429) {
+        return r.json().catch(function () { return {}; }).then(function (data) {
+          var err = new Error("daily_budget");
+          err.budget = true; err.resetAt = data.resetAt || null;
+          throw err;
+        });
+      }
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    });
+  }
+  function sendChunkWithRetry(payload) {
+    var attempt = 0;
+    function tryOnce() {
+      attempt++;
+      return sendChunkToServer(payload).catch(function (e) {
+        if (e && e.budget) throw e;
+        if (attempt >= 3) throw e;
+        return new Promise(function (res) { setTimeout(res, 800 * attempt); }).then(tryOnce);
+      });
+    }
+    return tryOnce();
+  }
+
+  /* ── 이월/실패 조각 저장·재처리 ───────── */
+  function persistPending(s, item) {
+    var blobId = skey(s) + "/pending/" + item.seq + "-" + Date.now();
+    return AudioStore.put(blobId, item.blob).then(function () {
+      var d = sdata(s);
+      var pending = (d.pending || []).concat([{
+        seq: item.seq, status: item.status, placeholder: item.placeholder,
+        blobId: blobId, duration: item.duration, lang: item.lang,
+        resetAt: item.resetAt || null, addedAt: new Date().toISOString()
+      }]);
+      ssave(s, { pending: pending });
+    });
+  }
+  function processPendingItem(item) {
+    return AudioStore.get(item.blobId).then(function (blob) {
+      if (!blob) return { ok: false, remove: true };
+      return sendChunkWithRetry({ blob: blob, duration: item.duration, lang: item.lang })
+        .then(function (data) { return { ok: true, text: (data.text || "").trim() || "(무음)" }; })
+        .catch(function (e) {
+          if (e && e.budget) return { ok: false, budget: true, resetAt: e.resetAt };
+          return { ok: false };
+        });
+    });
+  }
+  function resolvePendingForSession(s) {
+    var pending = (sdata(s).pending || []).slice();
+    if (!pending.length) return Promise.resolve({ resolved: 0, remaining: 0 });
+    var remaining = [], resolvedCount = 0;
+    var chain = Promise.resolve();
+    pending.forEach(function (item) {
+      chain = chain.then(function () {
+        return processPendingItem(item).then(function (r) {
+          if (r.ok) {
+            var dd = sdata(s);
+            ssave(s, { transcript: replacePlaceholder(dd.transcript || "", item.placeholder, r.text) });
+            AudioStore.del(item.blobId);
+            resolvedCount++;
+          } else if (!r.remove) {
+            remaining.push(r.budget ? { seq: item.seq, status: item.status, placeholder: item.placeholder, blobId: item.blobId, duration: item.duration, lang: item.lang, resetAt: r.resetAt || item.resetAt, addedAt: item.addedAt } : item);
+          }
+        });
+      });
+    });
+    return chain.then(function () {
+      ssave(s, { pending: remaining });
+      return { resolved: resolvedCount, remaining: remaining.length };
+    });
+  }
+
+  /* ── 업로드된 오디오 받아쓰기(용량 초과 시 조각 분할) ── */
+  var UPLOAD_DIRECT_MAX_BYTES = 2.5 * 1024 * 1024;
+  var UPLOAD_CHUNK_SEC = 90; // 16kHz mono WAV 기준 조각당 약 2.9MB — 배포 후 실측으로 확정한 값
+
+  function getAudioDuration(blob) {
+    return new Promise(function (resolve) {
+      var url = URL.createObjectURL(blob);
+      var a = new Audio();
+      a.preload = "metadata";
+      a.onloadedmetadata = function () { var dur = a.duration; URL.revokeObjectURL(url); resolve(isFinite(dur) ? dur : 0); };
+      a.onerror = function () { URL.revokeObjectURL(url); resolve(0); };
+      a.src = url;
+    });
+  }
+  function encodeWav(float32, sampleRate) {
+    var buffer = new ArrayBuffer(44 + float32.length * 2);
+    var view = new DataView(buffer);
+    function writeStr(off, str) { for (var i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); }
+    writeStr(0, "RIFF"); view.setUint32(4, 36 + float32.length * 2, true);
+    writeStr(8, "WAVE"); writeStr(12, "fmt "); view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    writeStr(36, "data"); view.setUint32(40, float32.length * 2, true);
+    var off = 44;
+    for (var i = 0; i < float32.length; i++, off += 2) {
+      var v = Math.max(-1, Math.min(1, float32[i]));
+      view.setInt16(off, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+    }
+    return new Blob([buffer], { type: "audio/wav" });
+  }
+  function decodeAndChunkWav(blob, chunkSeconds) {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    return blob.arrayBuffer().then(function (buf) {
+      var actx = new AC();
+      return actx.decodeAudioData(buf).then(function (decoded) {
+        var targetRate = 16000;
+        var offlineLen = Math.max(1, Math.ceil(decoded.duration * targetRate));
+        var offline = new OfflineAudioContext(1, offlineLen, targetRate);
+        var src = offline.createBufferSource();
+        src.buffer = decoded; src.connect(offline.destination); src.start(0);
+        return offline.startRendering().then(function (rendered) {
+          var samples = rendered.getChannelData(0);
+          var out = [], chunkLen = chunkSeconds * targetRate;
+          for (var pos = 0; pos < samples.length; pos += chunkLen) {
+            var slice = samples.subarray(pos, Math.min(pos + chunkLen, samples.length));
+            out.push({ blob: encodeWav(slice, targetRate), duration: slice.length / targetRate });
+          }
+          try { actx.close(); } catch (x) {}
+          return out;
+        });
+      });
+    });
+  }
+  function transcribeUploadedAudio(s, a, row) {
+    var c = s.course;
+    if (c.transcribe === false) { alert("이 과목은 받아쓰기를 사용하지 않습니다."); return; }
+    if (!sttEndpoint()) { alert("설정에서 받아쓰기 API 주소를 먼저 넣어주세요."); return; }
+    var lang2 = (Store.get("lang/" + c.id, c.sttLang) || "ko-KR").slice(0, 2);
+    var statusSpan = el("span", { class: "tiny dim", text: "처리 중…" });
+    row.appendChild(statusSpan);
+    AudioStore.get(a.id).then(function (blob) {
+      if (!blob) throw new Error("오디오를 찾을 수 없음");
+      if (blob.size <= UPLOAD_DIRECT_MAX_BYTES) {
+        return getAudioDuration(blob).then(function (dur) {
+          return sendChunkWithRetry({ blob: blob, duration: dur || 1, lang: lang2 }).then(function (data) { return [(data.text || "").trim()]; });
+        });
+      }
+      statusSpan.textContent = "큰 파일 · 여러 조각으로 나누는 중… (노트북에서 실행 권장)";
+      return decodeAndChunkWav(blob, UPLOAD_CHUNK_SEC).then(function (wavChunks) {
+        var texts = [], chain = Promise.resolve();
+        wavChunks.forEach(function (wb, i) {
+          chain = chain.then(function () {
+            statusSpan.textContent = "조각 " + (i + 1) + "/" + wavChunks.length + " 전송 중…";
+            return sendChunkWithRetry({ blob: wb.blob, duration: wb.duration, lang: lang2 })
+              .then(function (data) { texts.push((data.text || "").trim()); })
+              .catch(function (e) { texts.push(e && e.budget ? "[예산 초과로 실패: 조각 " + (i + 1) + "]" : "[실패: 조각 " + (i + 1) + "]"); });
+          });
+        });
+        return chain.then(function () { return texts; });
+      });
+    }).then(function (texts) {
+      var dd = sdata(s);
+      var addition = "[업로드: " + (a.label || "오디오") + "]\n" + texts.join(" ").trim();
+      ssave(s, { transcript: ((dd.transcript || "").trim() + "\n\n" + addition).trim() });
+      drawTranscriptIfOpen(s);
+      statusSpan.textContent = "완료";
+      setTimeout(function () { if (row.contains(statusSpan)) row.removeChild(statusSpan); }, 3000);
+    }).catch(function (e) {
+      statusSpan.textContent = "실패: " + (e && e.message ? e.message : e);
+    });
+  }
+  // 세션 모달이 아직 열려 있을 때만 즉시 갱신 — 없으면 다음에 열 때 sdata()가 최신값을 준다.
+  function drawTranscriptIfOpen(s) {
+    if (openModal && openModal.key === skey(s) && openModal.redraw) openModal.redraw();
   }
 
   /* ── 요약 ─────────────────────────────── */

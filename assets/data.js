@@ -221,6 +221,7 @@ window.SEM_3_2 = {
       credits: "2/0/0",
       color: "#EFCF86",
       sttLang: "ko-KR",
+      transcribe: false,
       book: "기초: Bayer / Czerny / Burgmüller · 중급 이상: 자유 선택",
       grading: [["출석 및 태도", 50], ["과제", 50]],
       note: "수업에서 다룰 악보는 본인이 지참(필기 가능 상태). 공지는 LMS.",
