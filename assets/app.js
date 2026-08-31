@@ -266,6 +266,7 @@
     while (!list.length && guard++ < 14) { lookahead = addDays(lookahead, 1); list = sessionsOn(lookahead); }
     var isToday = lookahead === todayISO;
 
+    var heroBudgetSlot = el("div", { style: "min-width:170px;margin-top:10px" }, [el("p", { class: "tiny dim", text: "사용량 확인 중…" })]);
     var hero = el("section", { class: "hero" }, [
       el("div", {}, [
         el("p", { class: "eyebrow", text: SEM.term + " · " + SEM.label }),
@@ -276,9 +277,11 @@
       ]),
       el("div", { class: "hero-week" }, [
         el("i", { text: "week" }),
-        el("b", { text: (w >= 1 && w <= SEM.weeks) ? String(w).padStart(2, "0") : "--" })
+        el("b", { text: (w >= 1 && w <= SEM.weeks) ? String(w).padStart(2, "0") : "--" }),
+        heroBudgetSlot
       ])
     ]);
+    fetchUsageCached().then(function (u) { heroBudgetSlot.innerHTML = ""; heroBudgetSlot.appendChild(budgetBarNode(u)); });
 
     var railBlock = el("section", { class: "block" }, [
       el("div", { class: "block-head" }, [el("h2", { text: "16주" }), el("span", { class: "eyebrow", text: "점 = 시험/제출 주" })]),
@@ -602,6 +605,14 @@
 
     var statusEl = el("span", { class: "mono tiny dim", text: "" });
     var timerEl = el("span", { class: "mono", style: "font-size:20px", text: "00:00" });
+    var budgetSlot = el("span", { style: "min-width:150px" });
+    function refreshBudgetMini(extraSeconds, force) {
+      fetchUsageCached(force).then(function (u) {
+        budgetSlot.innerHTML = "";
+        budgetSlot.appendChild(budgetBarNode(u, extraSeconds));
+      });
+    }
+    refreshBudgetMini(0);
     var segmentEl = el("span", { class: "mono tiny dim", style: "display:none" });
     var chunkEl = el("span", { class: "mono tiny dim", style: "display:none" });
     var live = el("span", { class: "pulse", style: "display:none" });
@@ -630,14 +641,12 @@
       pendingBtn.title = "";
       pendingBtn.textContent = "대기 조각 지금 처리 (" + n + ")";
       if (!n) return;
-      var ue = usageEndpoint();
-      if (!ue) return;
-      fetch(ue).then(function (r) { return r.json(); }).then(function (u) {
+      fetchUsageCached().then(function (u) {
         if (u && typeof u.remainingSeconds === "number" && u.remainingSeconds <= 0) {
           pendingBtn.disabled = true;
           pendingBtn.title = "오늘 예산 소진 — " + fmtResetKST(u.resetAt) + " 이후 다시 시도";
         }
-      }).catch(function () {});
+      });
     }
     function processPendingNow() {
       pendingBtn.disabled = true; pendingBtn.textContent = "처리 중…";
@@ -668,7 +677,7 @@
     var summarySlot = el("div", { style: "margin-top:16px" });
 
     modal.appendChild(el("div", { class: "card", style: "margin-bottom:16px" }, [
-      el("div", { class: "rec-bar" }, [live, timerEl, segmentEl, chunkEl, startBtn, stopBtn, cancelBtn, starBtn, langSel, noTranscribeLabel, pendingBtn, statusEl]),
+      el("div", { class: "rec-bar" }, [live, timerEl, budgetSlot, segmentEl, chunkEl, startBtn, stopBtn, cancelBtn, starBtn, langSel, noTranscribeLabel, pendingBtn, statusEl]),
       transcriptHead, transcriptBox, audioSlot, summarySlot
     ]));
 
@@ -695,6 +704,7 @@
         chunkEl.style.display = "none";
         clearTranscriptBtn.style.display = "";
         drawTranscript();
+        refreshBudgetMini(0);
       });
     }
 
@@ -801,7 +811,10 @@
       if (recordingElsewhere()) { statusEl.textContent = "다른 수업 녹음 중"; return; }
       var segNum = countRecSegments(sdata(s).audios) + 1;
       startRec(s, langSel.value, {
-        onTick: function (sec) { timerEl.textContent = fmtSec(sec); },
+        onTick: function (sec) {
+          timerEl.textContent = fmtSec(sec);
+          if (sec % 5 === 0) refreshBudgetMini((rec && rec.transcribeEnabled) ? sec : 0);
+        },
         onText: drawTranscript,
         onStatus: function (t) { statusEl.textContent = t; },
         onChunkProgress: function (doneN, total) {
@@ -825,6 +838,7 @@
         chunkEl.style.display = "none";
         clearTranscriptBtn.style.display = "";
         drawTranscript(); drawAudio(); refreshPendingUI();
+        refreshBudgetMini(0, true);
         makeSummary(s, summarySlot, drawSummary);
       });
     }
@@ -1098,6 +1112,47 @@
   function usageEndpoint() {
     var t = sttEndpoint();
     return t ? t.replace(/\/transcribe\/?$/, "/usage") : null;
+  }
+
+  /* ── 일일 예산 바 ─────────────────────── */
+  var USAGE_CACHE_MS = 60 * 1000;
+  var usageCache = { data: null, at: 0 };
+  function fetchUsageCached(force) {
+    var now = Date.now();
+    if (!force && usageCache.data && (now - usageCache.at) < USAGE_CACHE_MS) return Promise.resolve(usageCache.data);
+    var ue = usageEndpoint();
+    if (!ue) return Promise.resolve(null);
+    return fetch(ue).then(function (r) { return r.json(); }).then(function (u) {
+      usageCache = { data: u, at: Date.now() };
+      return u;
+    }).catch(function () { return null; });
+  }
+  function countCarryover() {
+    var n = 0;
+    (Store.keys() || []).forEach(function (k) {
+      if (k.indexOf("s/" + SEM_ID + "/") !== 0) return;
+      var d = Store.get(k, null);
+      if (!d || !d.pending) return;
+      d.pending.forEach(function (p) { if (p.status === "carryover") n++; });
+    });
+    return n;
+  }
+  // extraSeconds: 지금 녹음 중인 조각을 서버가 아직 모르니 로컬 타이머로 추정치를 더해줌
+  function budgetBarNode(usage, extraSeconds) {
+    var pendingN = countCarryover();
+    if (!usage) return el("p", { class: "tiny dim", text: "받아쓰기 사용량 조회 불가" });
+    var used = Math.max(0, (usage.usedSeconds || 0) + (extraSeconds || 0));
+    var limit = usage.limitSeconds || 1;
+    var pct = Math.max(0, Math.min(100, Math.round(used / limit * 100)));
+    var color = pct >= 90 ? "var(--live)" : pct >= 70 ? "#F5A623" : "var(--fg-dim)";
+    var usedMin = Math.round(used / 60), limitMin = Math.round(limit / 60);
+    var label = "받아쓰기 오늘 " + usedMin + "분 / " + limitMin + "분 · 초기화 내일 09:00 (KST)" + (pendingN ? " · 이월 대기 " + pendingN + "조각" : "");
+    var box = el("div", {}, [
+      el("div", { class: "bars", style: "margin-top:4px" }, [el("i", { style: "width:" + pct + "%;background:" + color })]),
+      el("p", { class: "tiny dim", style: "margin-top:4px", text: label })
+    ]);
+    if (used >= limit) box.appendChild(el("p", { class: "tiny", style: "color:var(--live);margin-top:2px", text: "오늘 한도 소진 — 이후 녹음은 내일 자동 전사" }));
+    return box;
   }
   // 과목/주차 문맥을 Whisper initial_prompt 힌트로 — 고유명사·전문용어 인식 정확도를 올려줌
   function buildTranscribeHint(s) {
