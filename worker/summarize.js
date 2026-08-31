@@ -1,16 +1,15 @@
-/* class.toowani 요약/받아쓰기 프록시 — Cloudflare Worker
+/* class.toowani 받아쓰기 프록시 — Cloudflare Worker
+ *
+ * 요약은 API를 호출하지 않는다 — "Claude용 프롬프트 복사"로 claude.ai에 직접 붙여넣는
+ * 수동 워크플로라서, 이 Worker는 Whisper 받아쓰기와 사용량 조회만 맡는다.
  *
  * 배포:
  *   1) Workers 새 프로젝트 생성 → 이 파일 내용 붙여넣기
- *   2) Settings → Variables → Secret 에 ANTHROPIC_API_KEY 추가
- *   3) Workers AI 바인딩(AI)과 KV 네임스페이스(BUDGET_KV)를 wrangler.toml 대로 연결
- *   4) 사이트 설정 화면의 "요약 API 주소"에 이 Worker 주소를 입력 (API 키는 비워둠)
- *      "받아쓰기 API 주소"는 비워두면 요약 API 주소에서 자동으로 유추합니다.
- *
- * 이렇게 하면 API 키가 브라우저에 노출되지 않습니다.
+ *   2) Workers AI 바인딩(AI)과 KV 네임스페이스(BUDGET_KV)를 wrangler.toml 대로 연결
+ *   3) 사이트 설정 화면의 "받아쓰기 API 주소"에 이 Worker 주소 + /transcribe 를 입력
+ *      (비워두면 assets/data.js의 API_DEFAULTS.transcribe 를 그대로 씀)
  *
  * 라우팅:
- *   POST /          → 기존 요약 프록시 (동작 그대로)
  *   POST /transcribe → Workers AI Whisper로 오디오 조각 받아쓰기 (일일 예산 가드 포함)
  *   GET  /usage      → 오늘 사용량/한도 조회
  */
@@ -26,32 +25,7 @@ export default {
     if (url.pathname === "/transcribe") return handleTranscribe(request, env, origin);
     if (url.pathname === "/usage" && request.method === "GET") return handleUsage(env, origin);
 
-    // 기존 요약 프록시 — 동작 그대로
-    if (request.method !== "POST") return cors(new Response("POST only", { status: 405 }), origin);
-
-    let body;
-    try { body = await request.json(); } catch { return cors(json({ error: "bad json" }, 400), origin); }
-    const prompt = String(body.prompt || "").slice(0, 60000);
-    if (!prompt) return cors(json({ error: "prompt 없음" }, 400), origin);
-
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": env.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model: body.model || "claude-sonnet-4-6",
-        max_tokens: 2000,
-        messages: [{ role: "user", content: prompt }]
-      })
-    });
-
-    if (!r.ok) return cors(json({ error: "upstream " + r.status, detail: await r.text() }, 502), origin);
-    const data = await r.json();
-    const summary = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
-    return cors(json({ summary }), origin);
+    return cors(new Response("not found", { status: 404 }), origin);
   }
 };
 
