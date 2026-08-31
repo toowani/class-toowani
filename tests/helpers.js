@@ -75,10 +75,16 @@ function fakeMicStream() {
   return { getTracks: function () { return [{ stop: function () {} }]; } };
 }
 
-// fetch를 큐로 통제 — 언제, 어떤 응답으로 각 호출을 마무리할지 테스트가 직접 결정한다.
+function okResponse(obj) { return { ok: true, status: 200, json: function () { return Promise.resolve(obj); } }; }
+function budgetResponse(resetAt) { return { ok: false, status: 429, json: function () { return Promise.resolve({ reason: "daily_budget", resetAt: resetAt || null }); } }; }
+function usageStubResponse() { return okResponse({ usedSeconds: 0, limitSeconds: 12000, remainingSeconds: 12000, resetAt: null }); }
+
+// fetch를 큐로 통제 — /transcribe(POST) 호출만 테스트가 직접 resolve/reject 하고,
+// 예산 바가 부르는 GET /usage는 즉시 고정 응답으로 흘려보내 조각 전송 호출 수 assert가 흔들리지 않게 한다.
 function makeFetchQueue() {
   var calls = [];
   var fn = jest.fn(function (url, init) {
+    if (!init || !init.method || init.method === "GET") return Promise.resolve(usageStubResponse());
     var entry = { url: url, init: init };
     var p = new Promise(function (res, rej) { entry.resolve = res; entry.reject = rej; });
     entry.promise = p;
@@ -87,8 +93,6 @@ function makeFetchQueue() {
   });
   return { fn: fn, calls: calls };
 }
-function okResponse(obj) { return { ok: true, status: 200, json: function () { return Promise.resolve(obj); } }; }
-function budgetResponse(resetAt) { return { ok: false, status: 429, json: function () { return Promise.resolve({ reason: "daily_budget", resetAt: resetAt || null }); } }; }
 
 function setupGlobals() {
   global.MediaRecorder = FakeMediaRecorder;
