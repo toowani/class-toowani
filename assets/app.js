@@ -933,12 +933,14 @@
     var placeholder = "…(" + seq + "번째 조각 처리 중)";
     r.final = (r.final.replace(/\s+$/, "")) + " " + placeholder + " ";
     r.cb.onText();
+    var offset = (seq - 1) * (ROTATE_MS / 1000);
     r.queue = r.queue.then(function () {
       if (r.cancelled) return;
-      return sendChunkWithRetry({ blob: blob, duration: duration, lang: (r.lang || "").slice(0, 2) })
+      return sendChunkWithRetry({ blob: blob, duration: duration, lang: (r.lang || "").slice(0, 2), hint: buildTranscribeHint(r.s) })
         .then(function (data) {
           if (r.cancelled) return;
-          r.final = replacePlaceholder(r.final, placeholder, (data.text || "").trim() || "(무음)");
+          var lines = segmentsToLines(data, offset);
+          r.final = replacePlaceholder(r.final, placeholder, lines.length ? lines.join("\n") : "(무음)");
         })
         .catch(function (e) {
           if (r.cancelled) return;
@@ -1029,6 +1031,49 @@
     } catch (e) { return "다음 초기화"; }
   }
 
+  /* ── 전사 줄바꿈 (Whisper 출력엔 문장부호가 없어 요약이 한 덩어리로 뭉침) ── */
+  // 25단어(영어) / 60자(한국어) 단위로 잘라 줄바꿈 경계를 만든다.
+  function chunkText(text) {
+    text = (text || "").replace(/\s+/g, " ").trim();
+    if (!text) return [];
+    var isKorean = /[가-힣]/.test(text);
+    var out = [];
+    if (isKorean) {
+      var chars = Array.from(text);
+      for (var i = 0; i < chars.length; i += 60) out.push(chars.slice(i, i + 60).join(""));
+    } else {
+      var words = text.split(" ");
+      for (var j = 0; j < words.length; j += 25) out.push(words.slice(j, j + 25).join(" "));
+    }
+    return out;
+  }
+  // Whisper 응답을 "[mm:ss] 텍스트" 줄 배열로. segments가 있으면 세그먼트별 정확한 시각,
+  // 없으면 조각 시작 시각 하나로 묶어 chunkText로 잘라 붙인다.
+  function segmentsToLines(data, offsetSeconds) {
+    if (data && data.segments && data.segments.length) {
+      return data.segments.map(function (seg) {
+        var text = (seg.text || "").trim();
+        if (!text) return null;
+        return "[" + fmtSec(Math.max(0, Math.floor(offsetSeconds + (seg.start || 0)))) + "] " + text;
+      }).filter(Boolean);
+    }
+    var text = (data && data.text || "").trim();
+    if (!text) return [];
+    var ts = "[" + fmtSec(Math.max(0, Math.floor(offsetSeconds))) + "] ";
+    return chunkText(text).map(function (line) { return ts + line; });
+  }
+  // 기존에 flat 문자열로 저장된 transcript를 요약 시점에만 임시로 줄바꿈 — 저장은 건드리지 않음.
+  function looksSegmented(text) {
+    var lines = text.split("\n").filter(function (l) { return l.trim(); });
+    if (lines.length < 2) return false;
+    return (text.length / lines.length) < 400;
+  }
+  function ensureLineBreaks(text) {
+    if (!text) return text;
+    if (looksSegmented(text)) return text;
+    return chunkText(text).join("\n");
+  }
+
   /* ── API 주소 (설정값 → data.js 기본값 순으로 사용) ──── */
   function apiDefault(key) { return (window.API_DEFAULTS && window.API_DEFAULTS[key]) || null; }
   function summarizeEndpoint() {
@@ -1048,6 +1093,12 @@
     var t = sttEndpoint();
     return t ? t.replace(/\/transcribe\/?$/, "/usage") : null;
   }
+  // 과목/주차 문맥을 Whisper initial_prompt 힌트로 — 고유명사·전문용어 인식 정확도를 올려줌
+  function buildTranscribeHint(s) {
+    var c = s.course;
+    var terms = (c.keywords || []).join(", ");
+    return c.en + " lecture, week " + s.week + ": " + (s.topic || "") + (terms ? ". Terms: " + terms : "");
+  }
   function sendChunkToServer(payload) {
     var endpoint = sttEndpoint();
     if (!endpoint) return Promise.reject(new Error("받아쓰기 API 주소 없음"));
@@ -1056,7 +1107,8 @@
       headers: {
         "content-type": (payload.blob && payload.blob.type) || "audio/webm",
         "x-language": payload.lang || "",
-        "x-duration-sec": String(payload.duration)
+        "x-duration-sec": String(payload.duration),
+        "x-initial-prompt": encodeURIComponent(payload.hint || "")
       },
       body: payload.blob
     }).then(function (r) {
@@ -1097,11 +1149,15 @@
       ssave(s, { pending: pending });
     });
   }
-  function processPendingItem(item) {
+  function processPendingItem(s, item) {
     return AudioStore.get(item.blobId).then(function (blob) {
       if (!blob) return { ok: false, remove: true };
-      return sendChunkWithRetry({ blob: blob, duration: item.duration, lang: item.lang })
-        .then(function (data) { return { ok: true, text: (data.text || "").trim() || "(무음)" }; })
+      return sendChunkWithRetry({ blob: blob, duration: item.duration, lang: item.lang, hint: buildTranscribeHint(s) })
+        .then(function (data) {
+          var offset = (item.seq - 1) * (ROTATE_MS / 1000);
+          var lines = segmentsToLines(data, offset);
+          return { ok: true, text: lines.length ? lines.join("\n") : "(무음)" };
+        })
         .catch(function (e) {
           if (e && e.budget) return { ok: false, budget: true, resetAt: e.resetAt };
           return { ok: false };
@@ -1115,7 +1171,7 @@
     var chain = Promise.resolve();
     pending.forEach(function (item) {
       chain = chain.then(function () {
-        return processPendingItem(item).then(function (r) {
+        return processPendingItem(s, item).then(function (r) {
           if (r.ok) {
             var dd = sdata(s);
             ssave(s, { transcript: replacePlaceholder(dd.transcript || "", item.placeholder, r.text) });
@@ -1194,29 +1250,30 @@
     var lang2 = (Store.get("lang/" + c.id, c.sttLang) || "ko-KR").slice(0, 2);
     var statusSpan = el("span", { class: "tiny dim", text: "처리 중…" });
     row.appendChild(statusSpan);
+    var hint = buildTranscribeHint(s);
     AudioStore.get(a.id).then(function (blob) {
       if (!blob) throw new Error("오디오를 찾을 수 없음");
       if (blob.size <= UPLOAD_DIRECT_MAX_BYTES) {
         return getAudioDuration(blob).then(function (dur) {
-          return sendChunkWithRetry({ blob: blob, duration: dur || 1, lang: lang2 }).then(function (data) { return [(data.text || "").trim()]; });
+          return sendChunkWithRetry({ blob: blob, duration: dur || 1, lang: lang2, hint: hint }).then(function (data) { return segmentsToLines(data, 0); });
         });
       }
       statusSpan.textContent = "큰 파일 · 여러 조각으로 나누는 중… (노트북에서 실행 권장)";
       return decodeAndChunkWav(blob, UPLOAD_CHUNK_SEC).then(function (wavChunks) {
-        var texts = [], chain = Promise.resolve();
+        var lines = [], chain = Promise.resolve();
         wavChunks.forEach(function (wb, i) {
           chain = chain.then(function () {
             statusSpan.textContent = "조각 " + (i + 1) + "/" + wavChunks.length + " 전송 중…";
-            return sendChunkWithRetry({ blob: wb.blob, duration: wb.duration, lang: lang2 })
-              .then(function (data) { texts.push((data.text || "").trim()); })
-              .catch(function (e) { texts.push(e && e.budget ? "[예산 초과로 실패: 조각 " + (i + 1) + "]" : "[실패: 조각 " + (i + 1) + "]"); });
+            return sendChunkWithRetry({ blob: wb.blob, duration: wb.duration, lang: lang2, hint: hint })
+              .then(function (data) { lines = lines.concat(segmentsToLines(data, i * UPLOAD_CHUNK_SEC)); })
+              .catch(function (e) { lines.push(e && e.budget ? "[예산 초과로 실패: 조각 " + (i + 1) + "]" : "[실패: 조각 " + (i + 1) + "]"); });
           });
         });
-        return chain.then(function () { return texts; });
+        return chain.then(function () { return lines; });
       });
-    }).then(function (texts) {
+    }).then(function (lines) {
       var dd = sdata(s);
-      var addition = "[업로드: " + (a.label || "오디오") + "]\n" + texts.join(" ").trim();
+      var addition = "[업로드: " + (a.label || "오디오") + "]\n" + lines.join("\n").trim();
       ssave(s, { transcript: ((dd.transcript || "").trim() + "\n\n" + addition).trim() });
       drawTranscriptIfOpen(s);
       statusSpan.textContent = "완료";

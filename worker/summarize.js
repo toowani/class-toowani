@@ -90,6 +90,13 @@ async function handleTranscribe(request, env, origin) {
   const b64 = arrayBufferToBase64(buf);
   const input = { audio: b64, task: "transcribe" };
   if (language) input.language = language;
+  const hintHeader = request.headers.get("x-initial-prompt");
+  if (hintHeader) {
+    let hint;
+    try { hint = decodeURIComponent(hintHeader); } catch { hint = hintHeader; }
+    hint = hint.slice(0, 200);
+    if (hint) input.initial_prompt = hint;
+  }
 
   let result;
   try {
@@ -176,7 +183,7 @@ function allowedOrigin(origin) {
 }
 function cors(res, origin) {
   res.headers.set("Access-Control-Allow-Origin", origin);
-  res.headers.set("Access-Control-Allow-Headers", "content-type, authorization, x-language, x-duration-sec");
+  res.headers.set("Access-Control-Allow-Headers", "content-type, authorization, x-language, x-duration-sec, x-initial-prompt");
   res.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.headers.append("Vary", "Origin");
   return res;
