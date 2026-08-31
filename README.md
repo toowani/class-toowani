@@ -10,7 +10,8 @@ assets/data.js      ★ 시간표·실라버스 데이터. 수정은 여기서�
 assets/style.css
 assets/store.js     localStorage + IndexedDB
 assets/app.js       화면·녹음·요약 로직
-worker/summarize.js 요약용 프록시 예제 (Cloudflare Worker)
+worker/summarize.js 요약 프록시 + 받아쓰기(/transcribe, /usage) — Cloudflare Worker
+tests/              assets/app.js 녹음·받아쓰기 로직 jest 테스트 (npm install && npm test)
 ```
 
 ## 배포
@@ -35,17 +36,28 @@ GitHub Pages든 Cloudflare Pages든 이 폴더를 그대로 올리면 `class.too
 
 ## 녹음 → 요약이 도는 방식
 
-1. `녹음 시작` → `MediaRecorder`가 오디오를, Web Speech API가 실시간 받아쓰기를 동시에 기록
-2. `중지 후 요약` → 오디오는 IndexedDB에, 자막은 localStorage에 저장되고 요약이 자동 생성
-3. 요약은 두 갈래
+1. `녹음 시작` → `MediaRecorder` 두 개가 같은 마이크를 나눠 씀: 하나는 지금처럼 오디오 전체를
+   연속 녹음(재생·다운로드용), 다른 하나는 mono 32kbps로 **5분마다 회전**하며 조각을 만들어
+   Cloudflare Workers AI(`whisper-large-v3-turbo`)로 순서대로 보내 받아씁니다.
+2. 조각은 단일 흐름 큐로 하나씩 처리되어 응답 순서와 무관하게 자막에 순서대로 쌓입니다. 실패는
+   3회 재시도 후 "n번째 조각 실패"로 표시하고, 서버의 일일 예산(기본 200분)을 넘기면 그 조각은
+   "이월 대기"로 남았다가 다음 날 초기화(매일 09:00 KST) 이후 대시보드를 열면 자동으로 처리됩니다.
+3. `중지 후 요약` → 남은 조각까지 모두 끝난 뒤 오디오는 IndexedDB에, 자막은 localStorage에
+   저장되고 요약이 자동 생성됩니다.
+4. 요약은 두 갈래
    - **기기 내 요약(기본)**: 서버 없이 동작. 키워드 빈도 기반으로 핵심 문장을 뽑고, 과목 키워드 매칭 + `과제/제출/시험/next week` 같은 표현을 따로 걸러냅니다.
    - **AI 요약**: 설정에서 요약 API 주소를 넣으면 그쪽으로 보냅니다. `worker/summarize.js`를 배포해 그 주소를 넣는 걸 권장 — API 키가 브라우저에 남지 않습니다.
 
-받아쓰기는 Chrome·Edge에서만 동작합니다(Safari/Firefox는 녹음만 됨). 브라우저 탭이 백그라운드로 가면
-받아쓰기가 끊길 수 있으니 수업 중에는 탭을 열어두세요.
+받아쓰기는 오디오를 서버로 보내야 해서 **받아쓰기 API 주소**(설정 → 비워두면 요약 API 주소에서
+자동 유추)가 있어야 자막이 쌓입니다. 주소가 없거나 해당 과목이 `transcribe:false`(피아노처럼
+말이 거의 없는 수업)면 녹음은 되지만 자막은 쌓이지 않습니다 — 오류가 아니라 정상 동작입니다.
 
 과목별 받아쓰기 언어는 모달에서 바꿀 수 있고, 과목마다 기억됩니다.
 영어 강의(컴퓨터 구조, 기초시각화, 컴퓨터 네트워킹)는 `en-US`가 기본입니다.
+
+업로드한 오디오(휴대폰 녹음 등)도 항목별 "받아쓰기" 버튼으로 같은 서버에 보낼 수 있습니다.
+90초 넘게 용량이 크면 브라우저에서 16kHz mono WAV 조각으로 나눠 순서대로 보내는데, 90분짜리
+파일은 디코딩 메모리 부담이 있어 노트북에서 실행하는 걸 권장합니다.
 
 ## 저장 위치
 
@@ -80,6 +92,20 @@ npx wrangler pages deploy . --project-name=class-toowani
 5. `toowani.com` 도메인이 같은 Cloudflare 계정에 있으면 DNS 레코드가 자동으로 추가됨(Activate 클릭으로 완료).
    다른 계정/등록기관이면 안내되는 CNAME 레코드(`class` → `class-toowani.pages.dev`)를 해당 DNS에서 직접 추가
 6. DNS가 전파되면 (보통 몇 분) `https://class.toowani.com`으로 접속 가능. 인증서는 Cloudflare가 자동 발급
+
+### 받아쓰기 서버(Worker) 배포
+
+`wrangler.toml`에 Workers AI 바인딩(`[ai]`)과 예산 추적용 KV 네임스페이스(`BUDGET_KV`)가
+이미 설정돼 있습니다. 처음 배포할 때만:
+
+```
+npx wrangler kv namespace create BUDGET_KV   # 최초 1회 — id를 wrangler.toml에 반영
+npx wrangler deploy                          # worker/summarize.js 배포
+```
+
+`DAILY_BUDGET_SECONDS`(기본 12000초=200분)는 Workers 요금제가 Free인지 확인 못 해 보수적으로
+잡은 값입니다. Cloudflare 대시보드(Manage Account → Billing → Subscriptions)에서 Workers Paid가
+아님을 확인했다면 Workers AI 무료 한도(하루 1만 뉴런)에 맞춰 12600(210분)까지 올려도 됩니다.
 
 ### GitHub 자동 배포로 전환하려면
 
