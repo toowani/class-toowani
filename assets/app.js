@@ -1029,12 +1029,20 @@
     } catch (e) { return "다음 초기화"; }
   }
 
-  /* ── 받아쓰기 API 호출 ────────────────── */
+  /* ── API 주소 (설정값 → data.js 기본값 순으로 사용) ──── */
+  function apiDefault(key) { return (window.API_DEFAULTS && window.API_DEFAULTS[key]) || null; }
+  function summarizeEndpoint() {
+    var cfg = Store.get("ai", {});
+    if (cfg.url && cfg.url.trim()) return cfg.url.trim();
+    return apiDefault("summarize");
+  }
   function sttEndpoint() {
     var cfg = Store.get("ai", {});
     if (cfg.sttUrl && cfg.sttUrl.trim()) return cfg.sttUrl.trim();
-    if (!cfg.url) return null;
-    try { return new URL(cfg.url, location.href).origin + "/transcribe"; } catch (e) { return null; }
+    if (cfg.url && cfg.url.trim()) {
+      try { return new URL(cfg.url, location.href).origin + "/transcribe"; } catch (e) {}
+    }
+    return apiDefault("transcribe");
   }
   function usageEndpoint() {
     var t = sttEndpoint();
@@ -1229,6 +1237,7 @@
     var note = (d.note || "").trim();
     if (!text && !note) { alert("요약할 내용이 없습니다. 받아쓰기 결과나 메모를 먼저 채워주세요."); return; }
     var cfg = Store.get("ai", {});
+    var url = summarizeEndpoint();
     slot.innerHTML = "";
     slot.appendChild(el("div", { class: "empty", text: "요약을 만드는 중…" }));
 
@@ -1237,8 +1246,8 @@
       redraw();
     };
 
-    if (cfg.url) {
-      aiSummary(cfg, s, text, note).then(function (md) { finish(md, "ai"); })
+    if (url) {
+      aiSummary(cfg, url, s, text, note).then(function (md) { finish(md, "ai"); })
         .catch(function (e) {
           finish(localSummary(s, text, note) + "\n\n_AI 요약 실패(" + (e.message || e) + ") → 기기 내 요약으로 대체_", "local");
         });
@@ -1259,9 +1268,9 @@
       "=== 받아쓰기 ===\n" + text.slice(0, 24000) + "\n\n=== 학생 메모 ===\n" + (note || "(없음)");
   }
 
-  function aiSummary(cfg, s, text, note) {
+  function aiSummary(cfg, url, s, text, note) {
     var body, headers = { "content-type": "application/json" };
-    var isAnthropic = /anthropic\.com/.test(cfg.url);
+    var isAnthropic = /anthropic\.com/.test(url);
     if (isAnthropic) {
       headers["x-api-key"] = cfg.key || "";
       headers["anthropic-version"] = "2023-06-01";
@@ -1271,7 +1280,7 @@
       if (cfg.key) headers["authorization"] = "Bearer " + cfg.key;
       body = { prompt: prompt(s, text, note), course: s.course.id, week: s.week, date: s.date, transcript: text, note: note };
     }
-    return fetch(cfg.url, { method: "POST", headers: headers, body: JSON.stringify(body) })
+    return fetch(url, { method: "POST", headers: headers, body: JSON.stringify(body) })
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
       .then(function (data) {
         if (typeof data === "string") return data;
@@ -1334,17 +1343,23 @@
     var cfg = Store.get("ai", {});
     var scrim = el("div", { class: "scrim", onclick: function (e) { if (e.target === scrim) closeS(); } });
     function closeS() { document.body.removeChild(scrim); document.body.style.overflow = ""; }
-    var url = el("input", { class: "add-row", style: "width:100%;background:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 12px", placeholder: "https://... (비워두면 기기 내 요약만 사용)", value: cfg.url || "" });
+    var url = el("input", { class: "add-row", style: "width:100%;background:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 12px", placeholder: apiDefault("summarize") || "https://... (비워두면 기기 내 요약만 사용)", value: cfg.url || "" });
     var keyI = el("input", { type: "password", style: "width:100%;background:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 12px", placeholder: "비워둘 수 있음", value: cfg.key || "" });
     var model = el("input", { style: "width:100%;background:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 12px", placeholder: "claude-sonnet-4-6", value: cfg.model || "" });
-    var sttUrl = el("input", { style: "width:100%;background:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 12px", placeholder: "비워두면 요약 API 주소에서 자동으로 유추 (…/transcribe)", value: cfg.sttUrl || "" });
+    var sttUrl = el("input", { style: "width:100%;background:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 12px", placeholder: apiDefault("transcribe") || "비워두면 요약 API 주소에서 자동으로 유추 (…/transcribe)", value: cfg.sttUrl || "" });
     var usageBox = el("p", { class: "tiny dim", style: "margin:6px 0 16px", text: "오늘 사용량 확인 중…" });
     refreshUsageBox();
+    // Store에 저장하기 전, 지금 입력창에 있는 값 기준으로 미리보기 — sttEndpoint()와 같은 우선순위
+    // (직접 입력한 받아쓰기 주소 → 직접 입력한 요약 주소에서 유추 → data.js 기본값)
+    function liveSttEndpoint() {
+      if (sttUrl.value.trim()) return sttUrl.value.trim();
+      if (url.value.trim()) {
+        try { return new URL(url.value.trim(), location.href).origin + "/transcribe"; } catch (e) {}
+      }
+      return apiDefault("transcribe");
+    }
     function refreshUsageBox() {
-      var ue = (sttUrl.value.trim() || (function () {
-        if (!cfg.url) return null;
-        try { return new URL(cfg.url, location.href).origin + "/transcribe"; } catch (e) { return null; }
-      })());
+      var ue = liveSttEndpoint();
       ue = ue ? ue.replace(/\/transcribe\/?$/, "/usage") : null;
       if (!ue) { usageBox.textContent = "받아쓰기 API 주소가 없어 사용량을 확인할 수 없습니다."; return; }
       fetch(ue).then(function (r) { return r.json(); }).then(function (u) {
@@ -1359,7 +1374,7 @@
     var m = el("div", { class: "modal" }, [
       el("div", { class: "modal-head" }, [el("h2", { text: "설정 · 백업" }), el("button", { class: "ghost", text: "닫기 ✕", onclick: closeS })]),
       el("p", { class: "eyebrow", text: "요약 API 주소" }), url,
-      el("p", { class: "tiny dim", style: "margin:6px 0 16px", text: "직접 만든 프록시 주소를 넣는 걸 권장합니다. 프록시는 {prompt, transcript, note, ...}를 받아 {summary:\"마크다운\"} 을 돌려주면 됩니다." }),
+      el("p", { class: "tiny dim", style: "margin:6px 0 16px", text: "비워두면 위 placeholder의 기본 서버를 씁니다. 직접 만든 프록시가 있으면 여기 넣어 덮어쓰세요 — {prompt, transcript, note, ...}를 받아 {summary:\"마크다운\"} 을 돌려주면 됩니다." }),
       el("p", { class: "eyebrow", text: "API 키 (선택)" }), keyI,
       el("p", { class: "tiny dim", style: "margin:6px 0 16px", text: "브라우저에 저장되는 키는 이 기기에서 개발자도구로 볼 수 있습니다. 공개 사이트에서는 키 없이 프록시만 쓰세요." }),
       el("p", { class: "eyebrow", text: "모델" }), model,

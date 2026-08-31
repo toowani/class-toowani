@@ -1,7 +1,7 @@
 const h = require("./helpers");
 
 beforeEach(() => { jest.useFakeTimers(); });
-afterEach(() => { jest.useRealTimers(); jest.clearAllMocks(); });
+afterEach(() => { jest.useRealTimers(); jest.clearAllMocks(); delete window.API_DEFAULTS; });
 
 function setSttUrl(store) {
   store.set("ai", { sttUrl: "https://fake.test/transcribe" });
@@ -205,4 +205,32 @@ test("업로드한 오디오에 받아쓰기 버튼을 누르면 구분선과 �
   const saved = store._raw[key];
   expect(saved.transcript).toContain("[업로드: 휴대폰]");
   expect(saved.transcript).toContain("업로드에서 받아쓴 내용");
+});
+
+test("설정을 아무것도 안 넣어도 data.js의 API_DEFAULTS로 받아쓰기가 동작한다 (alert 없음)", async () => {
+  const { store, audioStore } = h.boot(); // "ai" 설정은 전혀 저장하지 않음
+  window.API_DEFAULTS = { summarize: "https://default.test/", transcribe: "https://default.test/transcribe" };
+  const fq = h.makeFetchQueue();
+  global.fetch = fq.fn;
+  global.alert = jest.fn();
+  global.Audio = class {
+    set src(v) { this._src = v; setTimeout(() => { this.duration = 10; if (this.onloadedmetadata) this.onloadedmetadata(); }, 0); }
+    get src() { return this._src; }
+  };
+
+  const key = "s/3-2/test-course/2026-01-05/09:00";
+  const uploadId = key + "/upload/1";
+  const blob = new Blob(["fake audio"], { type: "audio/mp4" });
+  await audioStore.put(uploadId, blob);
+  store.set(key, { note: "", transcript: "", summary: null, reviewed: false, pending: [], audios: [{ id: uploadId, label: "휴대폰", size: blob.size, at: "테스트" }] });
+
+  const modal = await h.openTestSession("test-course");
+  await h.flush();
+  const transcribeBtn = h.findButton(modal, "받아쓰기");
+  transcribeBtn.click();
+  await jest.advanceTimersByTimeAsync(10);
+
+  expect(global.alert).not.toHaveBeenCalled();
+  expect(fq.calls.length).toBe(1);
+  expect(fq.calls[0].url).toBe("https://default.test/transcribe");
 });

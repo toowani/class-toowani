@@ -3,6 +3,13 @@
  * day: 1=월 2=화 3=수 4=목 5=금
  */
 
+/* 설정 모달에서 비워두면(직접 값을 넣지 않으면) 쓰이는 기본 API 주소.
+ * 직접 만든 프록시가 있으면 설정에서 그 주소를 넣어 덮어쓰면 됨. */
+window.API_DEFAULTS = {
+  summarize: "https://class-summarize.toowani.workers.dev",
+  transcribe: "https://class-summarize.toowani.workers.dev/transcribe"
+};
+
 window.SEMESTERS = [
   { id: "1-1", label: "1학년 1학기", state: "past" },
   { id: "1-2", label: "1학년 2학기", state: "past" },
