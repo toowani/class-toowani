@@ -1,3 +1,16 @@
 name = "class-summarize"
 main = "worker/summarize.js"
 compatibility_date = "2026-08-30"
+
+[ai]
+binding = "AI"
+
+[[kv_namespaces]]
+binding = "BUDGET_KV"
+id = "4172c57c93dc456cad03f7ba7d6ab2d3"
+
+[vars]
+TRANSCRIBE_MODEL = "@cf/openai/whisper-large-v3-turbo"
+# Workers 요금제(Free/Paid)를 wrangler 권한 부족으로 확인하지 못해 보수적으로 200분(12000초)으로 시작.
+# 대시보드(Manage Account → Billing → Subscriptions)에서 Paid가 아님을 확인했다면 210분(12600초)까지 올려도 됨.
+DAILY_BUDGET_SECONDS = "12000"
