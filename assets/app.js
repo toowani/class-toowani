@@ -786,6 +786,12 @@
       if (!dd.summary) {
         summarySlot.appendChild(el("div", { class: "empty", text: "녹음을 중지하면 자동으로 만들어집니다. 자막을 직접 붙여넣고 만들어도 됩니다." }));
       } else {
+        if (dd.summary.mode === "local" && dd.summary.aiError) {
+          summarySlot.appendChild(el("div", { class: "card", style: "border-color:var(--live);margin-bottom:10px" }, [
+            el("p", { class: "small", style: "color:var(--live)", text: "AI 요약 실패: " + dd.summary.aiError + " → 기기 내 요약으로 대체" }),
+            el("button", { class: "btn", style: "margin-top:10px", text: "AI로 다시 시도", onclick: function () { makeSummary(s, summarySlot, drawSummary); } })
+          ]));
+        }
         summarySlot.appendChild(el("div", { class: "card summary", html: mdToHtml(dd.summary.text) }));
         summarySlot.appendChild(el("p", { class: "tiny dim", style: "margin-top:8px", text: dd.summary.mode === "ai" ? "AI 요약 · " + dd.summary.at : "기기 내 요약(키워드 기반) · " + dd.summary.at }));
       }
@@ -1288,9 +1294,11 @@
   }
 
   /* ── 요약 ─────────────────────────────── */
+  var AI_TRANSCRIPT_LIMIT = 24000;
+
   function makeSummary(s, slot, redraw) {
     var d = sdata(s);
-    var text = (d.transcript || "").trim();
+    var text = ensureLineBreaks((d.transcript || "").trim());
     var note = (d.note || "").trim();
     if (!text && !note) { alert("요약할 내용이 없습니다. 받아쓰기 결과나 메모를 먼저 채워주세요."); return; }
     var cfg = Store.get("ai", {});
@@ -1298,44 +1306,77 @@
     slot.innerHTML = "";
     slot.appendChild(el("div", { class: "empty", text: "요약을 만드는 중…" }));
 
-    var finish = function (md, mode) {
-      ssave(s, { summary: { text: md, mode: mode, at: new Date().toLocaleString("ko-KR") } });
+    var finish = function (md, mode, aiError) {
+      ssave(s, { summary: { text: md, mode: mode, at: new Date().toLocaleString("ko-KR"), aiError: aiError || null } });
       redraw();
     };
 
     if (url) {
       aiSummary(cfg, url, s, text, note).then(function (md) { finish(md, "ai"); })
         .catch(function (e) {
-          finish(localSummary(s, text, note) + "\n\n_AI 요약 실패(" + (e.message || e) + ") → 기기 내 요약으로 대체_", "local");
+          finish(localSummary(s, text, note), "local", e && e.message ? e.message : String(e));
         });
     } else {
       setTimeout(function () { finish(localSummary(s, text, note), "local"); }, 120);
     }
   }
 
+  function summaryInstructions() {
+    return "받아쓰기는 Whisper 자동 전사라 문장부호가 없고 고유명사·전문용어 오인식이 잦다. 맥락으로 보정하고, 확신 없는 고유명사는 뒤에 (?)를 붙여라.\n" +
+      "운영 공지(제출 방식·플랫폼·채점 규칙·선수지식·강의자료 위치·TA 정책 등)는 빠짐없이 '과제·공지·시험' 항목에 항목별로 정리하라 — 특히 첫 주 수업이면 이게 핵심이다.\n" +
+      "각 불릿 끝에는 근거가 되는 타임스탬프를 [mm:ss] 형식으로 붙여라(전사 각 줄 앞에 이미 타임스탬프가 있으니 참고해라).\n" +
+      "받아쓰기 중 학생이 '[★ mm:ss]'로 표시한 구간이 있다면 그 구간을 최우선으로 다뤄라.\n\n" +
+      "다음 형식의 한국어 마크다운으로만 답하라. 없는 항목은 생략하지 말고 '해당 없음'이라고 써라.\n" +
+      "## 한 줄 요약\n## 핵심 내용 (5~8개 불릿, 수식/용어는 원어 병기)\n## 오늘 나온 용어\n## 과제·공지·시험 언급\n## 헷갈릴 만한 부분 / 복습 포인트\n## 다음 수업 예습 한 가지\n\n";
+  }
+
   function prompt(s, text, note) {
     var c = s.course;
     var next = c.weekTopics[s.week] || "(마지막 주)";
     return "너는 대학생의 수업 노트 정리 조수다. 아래는 " + c.name + "(" + c.code + ", " + c.prof + ") 수업의 " +
-      s.week + "주차(" + s.date + ") 자동 받아쓰기 기록과 학생 메모다. 받아쓰기에는 오타와 오인식이 많으니 문맥으로 보정해라.\n" +
+      s.week + "주차(" + s.date + ") 자동 받아쓰기 기록과 학생 메모다.\n" +
       "이번 주 실라버스 주제: " + (s.topic || "") + "\n다음 주 주제: " + next + "\n\n" +
-      "받아쓰기 중 학생이 '[★ mm:ss]'로 표시한 구간이 있다면 그 구간을 최우선으로 다뤄라.\n\n" +
-      "다음 형식의 한국어 마크다운으로만 답하라. 없는 항목은 생략하지 말고 '해당 없음'이라고 써라.\n" +
-      "## 한 줄 요약\n## 핵심 내용 (5~8개 불릿, 수식/용어는 원어 병기)\n## 오늘 나온 용어\n## 과제·공지·시험 언급\n## 헷갈릴 만한 부분 / 복습 포인트\n## 다음 수업 예습 한 가지\n\n" +
-      "=== 받아쓰기 ===\n" + text.slice(0, 24000) + "\n\n=== 학생 메모 ===\n" + (note || "(없음)");
+      summaryInstructions() +
+      "=== 받아쓰기 ===\n" + text + "\n\n=== 학생 메모 ===\n" + (note || "(없음)");
   }
 
-  function aiSummary(cfg, url, s, text, note) {
+  // 24,000자를 넘으면 세그먼트(줄) 경계에서 앞/뒤로 잘라 각각 불릿만 뽑고(map),
+  // 그 결과를 합쳐 최종 1회로 정리한다(reduce). 문장 중간을 자르지 않기 위해 줄 단위로 자름.
+  function splitAtMidpoint(text) {
+    var lines = text.split("\n");
+    var half = text.length / 2, acc = 0, cut = lines.length;
+    for (var i = 0; i < lines.length; i++) {
+      acc += lines[i].length + 1;
+      if (acc >= half) { cut = i + 1; break; }
+    }
+    return [lines.slice(0, cut).join("\n"), lines.slice(cut).join("\n")];
+  }
+  function mapPrompt(s, part, label) {
+    return "다음은 " + s.course.name + " 수업 받아쓰기의 " + label + "이다. Whisper 자동 전사라 문장부호가 없고 고유명사 오인식이 있을 수 있다.\n" +
+      "핵심 내용·용어·운영 공지(제출 방식·플랫폼·채점 규칙·선수지식·강의자료 위치·TA 정책)·시험 관련 언급을 놓치지 말고 불릿로 뽑아라. " +
+      "각 불릿 끝에 근거 [mm:ss] 타임스탬프를 붙여라. 형식을 갖추지 말고 불릿만 나열해라.\n\n" + part;
+  }
+  function reducePrompt(s, partA, partB, note) {
+    var c = s.course;
+    var next = c.weekTopics[s.week] || "(마지막 주)";
+    return "너는 대학생의 수업 노트 정리 조수다. 아래는 " + c.name + "(" + c.code + ", " + c.prof + ") 수업의 " +
+      s.week + "주차(" + s.date + ") 받아쓰기를 앞/뒤로 나눠 미리 뽑아낸 불릿과 학생 메모다. 이 둘을 합쳐 최종 정리하라.\n" +
+      "이번 주 실라버스 주제: " + (s.topic || "") + "\n다음 주 주제: " + next + "\n\n" +
+      summaryInstructions() +
+      "=== 앞부분에서 뽑은 내용 ===\n" + partA + "\n\n=== 뒷부분에서 뽑은 내용 ===\n" + partB + "\n\n=== 학생 메모 ===\n" + (note || "(없음)");
+  }
+
+  function callSummaryApi(cfg, url, promptText) {
     var body, headers = { "content-type": "application/json" };
     var isAnthropic = /anthropic\.com/.test(url);
     if (isAnthropic) {
       headers["x-api-key"] = cfg.key || "";
       headers["anthropic-version"] = "2023-06-01";
       headers["anthropic-dangerous-direct-browser-access"] = "true";
-      body = { model: cfg.model || "claude-sonnet-4-6", max_tokens: 2000, messages: [{ role: "user", content: prompt(s, text, note) }] };
+      body = { model: cfg.model || "claude-sonnet-4-6", max_tokens: 2000, messages: [{ role: "user", content: promptText }] };
     } else {
       if (cfg.key) headers["authorization"] = "Bearer " + cfg.key;
-      body = { prompt: prompt(s, text, note), course: s.course.id, week: s.week, date: s.date, transcript: text, note: note };
+      body = { prompt: promptText };
     }
     return fetch(url, { method: "POST", headers: headers, body: JSON.stringify(body) })
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
@@ -1348,12 +1389,31 @@
       });
   }
 
+  function aiSummary(cfg, url, s, text, note) {
+    if (text.length <= AI_TRANSCRIPT_LIMIT) return callSummaryApi(cfg, url, prompt(s, text, note));
+    var halves = splitAtMidpoint(text);
+    return Promise.all([
+      callSummaryApi(cfg, url, mapPrompt(s, halves[0], "앞부분")),
+      callSummaryApi(cfg, url, mapPrompt(s, halves[1], "뒷부분"))
+    ]).then(function (parts) {
+      return callSummaryApi(cfg, url, reducePrompt(s, parts[0], parts[1], note));
+    });
+  }
+
   var STOP = "그리고,그래서,이제,근데,그러니까,여기서,우리가,이것은,저는,그거,이거,about,which,there,their,would,could,should,because,really,going,okay,right,think,thing,just,like,that,this,with,from,have,what,when,then,they,here,also,were,been,into,very,much,some,more,than,them,will,does,make".split(",");
+
+  var LOCAL_BULLET_MAX = 200;
 
   function localSummary(s, text, note) {
     var c = s.course;
     var all = (text + "\n" + note).trim();
-    var sents = all.split(/(?:[.!?。]|다\.|요\.|\n)+/).map(function (x) { return x.trim(); }).filter(function (x) { return x.length > 12; });
+    var lines = all.split("\n").map(function (x) { return x.trim(); }).filter(function (x) { return x.length > 12; });
+    // "핵심 내용"용 문장 후보: 줄 경계를 넘지 않는 선에서 문장부호로 더 잘게 쪼갬
+    var sents = [];
+    lines.forEach(function (line) {
+      line.split(/(?:[.!?。]|다\.|요\.)+/).forEach(function (x) { x = x.trim(); if (x.length > 12) sents.push(x); });
+    });
+
     var freq = {};
     all.toLowerCase().split(/[^0-9a-z가-힣]+/).forEach(function (w) {
       if (w.length < 2 || STOP.indexOf(w) >= 0) return;
@@ -1367,12 +1427,23 @@
       return { i: i, x: x, sc: weighted };
     }).sort(function (a, b) { return b.sc - a.sc; }).slice(0, 6).sort(function (a, b) { return a.i - b.i; });
 
+    // 200자 넘는 불릿은 잘라서 "…" 처리, 같은 내용이 다른 항목에 중복 출력되지 않게 추적
+    var used = {};
+    function take(str) {
+      var key = str.replace(/\s+/g, "").slice(0, 40);
+      if (used[key]) return null;
+      used[key] = true;
+      return str.length > LOCAL_BULLET_MAX ? str.slice(0, LOCAL_BULLET_MAX) + "…" : str;
+    }
+    var coreBullets = scored.map(function (o) { return take(o.x); }).filter(Boolean);
+
     var hits = (c.keywords || []).filter(function (k) { return all.toLowerCase().indexOf(k.toLowerCase()) >= 0; });
-    var actionRe = /(과제|숙제|퀴즈|시험|중간|기말|제출|마감|다음\s?주|리포트|발표|assignment|homework|quiz|exam|midterm|final|due|deadline|submit|next week|report)/i;
-    var actions = sents.filter(function (x) { return actionRe.test(x); }).slice(0, 6);
+    // 과제·공지 매칭은 줄 단위로만 (문장부호로 쪼갠 조각에서 매칭하면 문맥이 잘려 오탐이 잦음)
+    var actionRe = /(과제|숙제|퀴즈|시험|중간|기말|제출|마감|다음\s?주|리포트|발표|플랫폼|채점|공지|선수\s?지식|강의\s?자료|조교|TA|assignment|homework|quiz|exam|midterm|final|due|deadline|submit|next week|report|platform|grading|prerequisite|policy)/i;
+    var actions = lines.filter(function (x) { return actionRe.test(x); }).map(take).filter(Boolean).slice(0, 8);
 
     var md = "## 한 줄 요약\n" + (s.topic ? s.topic + " (실라버스 기준)" : "(주제 미정)") + "\n\n";
-    md += "## 핵심 내용\n" + (scored.length ? scored.map(function (o) { return "- " + o.x; }).join("\n") : "- 받아쓰기 내용이 짧아 추출하지 못했습니다.") + "\n\n";
+    md += "## 핵심 내용\n" + (coreBullets.length ? coreBullets.map(function (x) { return "- " + x; }).join("\n") : "- 받아쓰기 내용이 짧아 추출하지 못했습니다.") + "\n\n";
     md += "## 오늘 나온 용어\n" + (hits.length ? hits.map(function (h) { return "`" + h + "`"; }).join(" ") : "해당 없음") + "\n\n";
     md += "## 과제·공지·시험 언급\n" + (actions.length ? actions.map(function (a) { return "- " + a; }).join("\n") : "해당 없음") + "\n\n";
     md += "## 다음 수업 예습\n" + (c.weekTopics[s.week] ? "- " + c.weekTopics[s.week] : "- (학기 마지막)") + "\n";
