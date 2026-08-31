@@ -1337,6 +1337,24 @@
     var url = el("input", { class: "add-row", style: "width:100%;background:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 12px", placeholder: "https://... (비워두면 기기 내 요약만 사용)", value: cfg.url || "" });
     var keyI = el("input", { type: "password", style: "width:100%;background:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 12px", placeholder: "비워둘 수 있음", value: cfg.key || "" });
     var model = el("input", { style: "width:100%;background:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 12px", placeholder: "claude-sonnet-4-6", value: cfg.model || "" });
+    var sttUrl = el("input", { style: "width:100%;background:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 12px", placeholder: "비워두면 요약 API 주소에서 자동으로 유추 (…/transcribe)", value: cfg.sttUrl || "" });
+    var usageBox = el("p", { class: "tiny dim", style: "margin:6px 0 16px", text: "오늘 사용량 확인 중…" });
+    refreshUsageBox();
+    function refreshUsageBox() {
+      var ue = (sttUrl.value.trim() || (function () {
+        if (!cfg.url) return null;
+        try { return new URL(cfg.url, location.href).origin + "/transcribe"; } catch (e) { return null; }
+      })());
+      ue = ue ? ue.replace(/\/transcribe\/?$/, "/usage") : null;
+      if (!ue) { usageBox.textContent = "받아쓰기 API 주소가 없어 사용량을 확인할 수 없습니다."; return; }
+      fetch(ue).then(function (r) { return r.json(); }).then(function (u) {
+        var usedMin = Math.round((u.usedSeconds || 0) / 60);
+        var limitMin = Math.round((u.limitSeconds || 0) / 60);
+        usageBox.textContent = "오늘 사용량 " + usedMin + "분 / " + limitMin + "분 · 초기화 " + (u.resetAtLabel || "매일 09:00 (KST)");
+      }).catch(function () { usageBox.textContent = "사용량을 확인할 수 없습니다."; });
+    }
+    sttUrl.addEventListener("blur", refreshUsageBox);
+    url.addEventListener("blur", refreshUsageBox);
 
     var m = el("div", { class: "modal" }, [
       el("div", { class: "modal-head" }, [el("h2", { text: "설정 · 백업" }), el("button", { class: "ghost", text: "닫기 ✕", onclick: closeS })]),
@@ -1345,8 +1363,13 @@
       el("p", { class: "eyebrow", text: "API 키 (선택)" }), keyI,
       el("p", { class: "tiny dim", style: "margin:6px 0 16px", text: "브라우저에 저장되는 키는 이 기기에서 개발자도구로 볼 수 있습니다. 공개 사이트에서는 키 없이 프록시만 쓰세요." }),
       el("p", { class: "eyebrow", text: "모델" }), model,
+      el("p", { class: "eyebrow", style: "margin-top:16px", text: "받아쓰기 API 주소 (선택)" }), sttUrl,
+      usageBox,
       el("div", { class: "rec-bar", style: "margin-top:20px" }, [
-        el("button", { class: "btn primary", text: "저장", onclick: function () { Store.set("ai", { url: url.value.trim(), key: keyI.value.trim(), model: model.value.trim() }); closeS(); } }),
+        el("button", { class: "btn primary", text: "저장", onclick: function () {
+          Store.set("ai", { url: url.value.trim(), key: keyI.value.trim(), model: model.value.trim(), sttUrl: sttUrl.value.trim() });
+          closeS();
+        } }),
         el("button", { class: "btn", text: "↓ 전체 백업(JSON)", onclick: function () {
           var blob = new Blob([JSON.stringify(Store.dump(), null, 2)], { type: "application/json" });
           var a = el("a", { href: URL.createObjectURL(blob), download: "class-toowani-backup-" + todayISO + ".json" });
