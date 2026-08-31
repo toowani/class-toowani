@@ -470,7 +470,14 @@
         el("div", {}, [el("span", { class: "k", text: "교재" }), document.createTextNode(c.book)])
       ]),
       el("div", { style: "margin-top:18px;max-width:420px" }, [bars, key]),
-      c.note ? el("p", { class: "small mute", style: "margin-top:14px", text: "※ " + c.note }) : null
+      c.note ? el("p", { class: "small mute", style: "margin-top:14px", text: "※ " + c.note }) : null,
+      (function () {
+        var label = "Project 지침 복사";
+        var btn = el("button", { class: "ghost", style: "margin-top:14px", text: label, onclick: function () {
+          copyToClipboard(btn, label, buildProjectInstructions(c));
+        } });
+        return el("div", {}, [btn, el("p", { class: "tiny dim", style: "margin-top:6px", text: "claude.ai에서 이 과목용 Project를 만들고 지침에 붙여넣으면, 이후엔 '전사문만 복사'만 매번 넣으면 됩니다." })]);
+      })()
     ]);
 
     var railBlock = el("section", { class: "block" }, [
@@ -675,6 +682,7 @@
     ]);
     var audioSlot = el("div", { style: "margin-top:12px" });
     var summarySlot = el("div", { style: "margin-top:16px" });
+    var showPasteBox = false;
 
     modal.appendChild(el("div", { class: "card", style: "margin-bottom:16px" }, [
       el("div", { class: "rec-bar" }, [live, timerEl, budgetSlot, segmentEl, chunkEl, startBtn, stopBtn, cancelBtn, starBtn, langSel, noTranscribeLabel, pendingBtn, statusEl]),
@@ -789,21 +797,48 @@
     function drawSummary() {
       summarySlot.innerHTML = "";
       var dd = sdata(s);
-      summarySlot.appendChild(el("div", { class: "block-head" }, [
-        el("h2", { text: "오늘 수업 요약" }),
-        el("button", { class: "ghost", text: dd.summary ? "다시 만들기" : "지금 만들기", onclick: function () { makeSummary(s, summarySlot, drawSummary); } })
-      ]));
+      var text = ensureLineBreaks((dd.transcript || "").trim());
+      var noteVal = note.value;
+
+      summarySlot.appendChild(el("div", { class: "block-head" }, [el("h2", { text: "오늘 수업 요약" })]));
+
+      var copyPromptLabel = "Claude용 프롬프트 복사";
+      var copyPromptBtn = el("button", { class: "btn", text: copyPromptLabel, onclick: function () {
+        copyToClipboard(copyPromptBtn, copyPromptLabel, buildClaudePrompt(s, text, noteVal));
+      } });
+      var copyTranscriptLabel = "전사문만 복사";
+      var copyTranscriptBtn = el("button", { class: "ghost", text: copyTranscriptLabel, onclick: function () {
+        copyToClipboard(copyTranscriptBtn, copyTranscriptLabel, buildTranscriptCopy(s, text, noteVal));
+      } });
+      var pasteBtn = el("button", { class: "ghost", text: "요약 붙여넣기", onclick: function () { showPasteBox = !showPasteBox; drawSummary(); } });
+      var quickBtn = el("button", { class: "ghost", text: "간이 요약 만들기", onclick: function () { quickSummary(s, drawSummary); } });
+      summarySlot.appendChild(el("div", { class: "rec-bar", style: "flex-wrap:wrap" }, [copyPromptBtn, copyTranscriptBtn, pasteBtn, quickBtn]));
+
+      if (showPasteBox) {
+        var pasteArea = el("textarea", { class: "note", style: "min-height:200px;margin-top:10px", placeholder: "Claude 응답(마크다운)을 여기에 붙여넣으세요" });
+        pasteArea.value = (dd.summary && dd.summary.mode === "manual") ? dd.summary.text : "";
+        summarySlot.appendChild(pasteArea);
+        summarySlot.appendChild(el("div", { class: "rec-bar", style: "margin-top:8px" }, [
+          el("button", { class: "btn primary", text: "저장", onclick: function () {
+            var v = pasteArea.value.trim();
+            if (!v) { alert("붙여넣은 내용이 없습니다."); return; }
+            ssave(s, { summary: { text: v, mode: "manual", at: new Date().toLocaleString("ko-KR") } });
+            showPasteBox = false;
+            drawSummary();
+          } }),
+          el("button", { class: "ghost", text: "취소", onclick: function () { showPasteBox = false; drawSummary(); } })
+        ]));
+      }
+
       if (!dd.summary) {
-        summarySlot.appendChild(el("div", { class: "empty", text: "녹음을 중지하면 자동으로 만들어집니다. 자막을 직접 붙여넣고 만들어도 됩니다." }));
+        summarySlot.appendChild(el("p", { class: "tiny dim", style: "margin-top:10px", text: "Claude 프롬프트 복사 → 요약 붙여넣기" }));
+        summarySlot.appendChild(el("div", { class: "empty", style: "margin-top:6px", text: "아직 요약이 없습니다." }));
       } else {
-        if (dd.summary.mode === "local" && dd.summary.aiError) {
-          summarySlot.appendChild(el("div", { class: "card", style: "border-color:var(--live);margin-bottom:10px" }, [
-            el("p", { class: "small", style: "color:var(--live)", text: "AI 요약 실패: " + dd.summary.aiError + " → 기기 내 요약으로 대체" }),
-            el("button", { class: "btn", style: "margin-top:10px", text: "AI로 다시 시도", onclick: function () { makeSummary(s, summarySlot, drawSummary); } })
-          ]));
+        if (dd.summary.mode !== "manual") {
+          summarySlot.appendChild(el("p", { class: "tiny dim", style: "margin-top:10px", text: "Claude 프롬프트 복사 → 요약 붙여넣기" }));
         }
-        summarySlot.appendChild(el("div", { class: "card summary", html: mdToHtml(dd.summary.text) }));
-        summarySlot.appendChild(el("p", { class: "tiny dim", style: "margin-top:8px", text: dd.summary.mode === "ai" ? "AI 요약 · " + dd.summary.at : "기기 내 요약(키워드 기반) · " + dd.summary.at }));
+        summarySlot.appendChild(el("div", { class: "card summary", style: "margin-top:10px", html: mdToHtml(dd.summary.text) }));
+        summarySlot.appendChild(el("p", { class: "tiny dim", style: "margin-top:8px", text: dd.summary.mode === "manual" ? "수동 요약(Claude) · " + dd.summary.at : "간이 요약 · " + dd.summary.at }));
       }
     }
 
@@ -839,7 +874,10 @@
         clearTranscriptBtn.style.display = "";
         drawTranscript(); drawAudio(); refreshPendingUI();
         refreshBudgetMini(0, true);
-        makeSummary(s, summarySlot, drawSummary);
+        // 이미 붙여넣어 둔 수동(Claude) 요약은 자동으로 덮어쓰지 않음 — 그 외엔 간이 요약을 새로 만든다.
+        var dd = sdata(s);
+        if (!dd.summary || dd.summary.mode !== "manual") quickSummary(s, drawSummary);
+        else drawSummary();
       });
     }
   }
@@ -1094,19 +1132,11 @@
     return chunkText(text).join("\n");
   }
 
-  /* ── API 주소 (설정값 → data.js 기본값 순으로 사용) ──── */
+  /* ── 받아쓰기 API 주소 (설정값 → data.js 기본값 순으로 사용) ──── */
   function apiDefault(key) { return (window.API_DEFAULTS && window.API_DEFAULTS[key]) || null; }
-  function summarizeEndpoint() {
-    var cfg = Store.get("ai", {});
-    if (cfg.url && cfg.url.trim()) return cfg.url.trim();
-    return apiDefault("summarize");
-  }
   function sttEndpoint() {
     var cfg = Store.get("ai", {});
     if (cfg.sttUrl && cfg.sttUrl.trim()) return cfg.sttUrl.trim();
-    if (cfg.url && cfg.url.trim()) {
-      try { return new URL(cfg.url, location.href).origin + "/transcribe"; } catch (e) {}
-    }
     return apiDefault("transcribe");
   }
   function usageEndpoint() {
@@ -1348,32 +1378,14 @@
     if (openModal && openModal.key === skey(s) && openModal.redraw) openModal.redraw();
   }
 
-  /* ── 요약 ─────────────────────────────── */
-  var AI_TRANSCRIPT_LIMIT = 24000;
-
-  function makeSummary(s, slot, redraw) {
+  /* ── 요약 (수동: Claude로 직접 정리해서 붙여넣는 방식) ── */
+  function quickSummary(s, redraw) {
     var d = sdata(s);
     var text = ensureLineBreaks((d.transcript || "").trim());
     var note = (d.note || "").trim();
     if (!text && !note) { alert("요약할 내용이 없습니다. 받아쓰기 결과나 메모를 먼저 채워주세요."); return; }
-    var cfg = Store.get("ai", {});
-    var url = summarizeEndpoint();
-    slot.innerHTML = "";
-    slot.appendChild(el("div", { class: "empty", text: "요약을 만드는 중…" }));
-
-    var finish = function (md, mode, aiError) {
-      ssave(s, { summary: { text: md, mode: mode, at: new Date().toLocaleString("ko-KR"), aiError: aiError || null } });
-      redraw();
-    };
-
-    if (url) {
-      aiSummary(cfg, url, s, text, note).then(function (md) { finish(md, "ai"); })
-        .catch(function (e) {
-          finish(localSummary(s, text, note), "local", e && e.message ? e.message : String(e));
-        });
-    } else {
-      setTimeout(function () { finish(localSummary(s, text, note), "local"); }, 120);
-    }
+    ssave(s, { summary: { text: localSummary(s, text, note), mode: "local", at: new Date().toLocaleString("ko-KR") } });
+    if (redraw) redraw();
   }
 
   function summaryInstructions() {
@@ -1385,7 +1397,8 @@
       "## 한 줄 요약\n## 핵심 내용 (5~8개 불릿, 수식/용어는 원어 병기)\n## 오늘 나온 용어\n## 과제·공지·시험 언급\n## 헷갈릴 만한 부분 / 복습 포인트\n## 다음 수업 예습 한 가지\n\n";
   }
 
-  function prompt(s, text, note) {
+  // 매번 통째로 복사해서 쓰는 1회용 프롬프트(지침 + 데이터 전부 포함)
+  function buildClaudePrompt(s, text, note) {
     var c = s.course;
     var next = c.weekTopics[s.week] || "(마지막 주)";
     return "너는 대학생의 수업 노트 정리 조수다. 아래는 " + c.name + "(" + c.code + ", " + c.prof + ") 수업의 " +
@@ -1395,64 +1408,42 @@
       "=== 받아쓰기 ===\n" + text + "\n\n=== 학생 메모 ===\n" + (note || "(없음)");
   }
 
-  // 24,000자를 넘으면 세그먼트(줄) 경계에서 앞/뒤로 잘라 각각 불릿만 뽑고(map),
-  // 그 결과를 합쳐 최종 1회로 정리한다(reduce). 문장 중간을 자르지 않기 위해 줄 단위로 자름.
-  function splitAtMidpoint(text) {
-    var lines = text.split("\n");
-    var half = text.length / 2, acc = 0, cut = lines.length;
-    for (var i = 0; i < lines.length; i++) {
-      acc += lines[i].length + 1;
-      if (acc >= half) { cut = i + 1; break; }
-    }
-    return [lines.slice(0, cut).join("\n"), lines.slice(cut).join("\n")];
+  // Claude Project(과목별 지침을 미리 넣어둔) 쪽에 매번 붙여넣을 때 앞에 붙이는 주차 태그.
+  // 예: [정보이론 W03 9/14 · 실라버스: Asymptotic Equipartition Property]
+  function weekTag(s) {
+    var c = s.course, d = parse(s.date);
+    return "[" + c.name + " W" + String(s.week).padStart(2, "0") + " " + (d.getMonth() + 1) + "/" + d.getDate() +
+      " · 실라버스: " + (s.topic || "") + "]";
   }
-  function mapPrompt(s, part, label) {
-    return "다음은 " + s.course.name + " 수업 받아쓰기의 " + label + "이다. Whisper 자동 전사라 문장부호가 없고 고유명사 오인식이 있을 수 있다.\n" +
-      "핵심 내용·용어·운영 공지(제출 방식·플랫폼·채점 규칙·선수지식·강의자료 위치·TA 정책)·시험 관련 언급을 놓치지 말고 불릿로 뽑아라. " +
-      "각 불릿 끝에 근거 [mm:ss] 타임스탬프를 붙여라. 형식을 갖추지 말고 불릿만 나열해라.\n\n" + part;
+  function buildTranscriptCopy(s, text, note) {
+    return weekTag(s) + "\n\n=== 받아쓰기 ===\n" + text + "\n\n=== 학생 메모 ===\n" + (note || "(없음)");
   }
-  function reducePrompt(s, partA, partB, note) {
-    var c = s.course;
-    var next = c.weekTopics[s.week] || "(마지막 주)";
-    return "너는 대학생의 수업 노트 정리 조수다. 아래는 " + c.name + "(" + c.code + ", " + c.prof + ") 수업의 " +
-      s.week + "주차(" + s.date + ") 받아쓰기를 앞/뒤로 나눠 미리 뽑아낸 불릿과 학생 메모다. 이 둘을 합쳐 최종 정리하라.\n" +
-      "이번 주 실라버스 주제: " + (s.topic || "") + "\n다음 주 주제: " + next + "\n\n" +
+
+  // 과목 하나를 통째로 맡기는 Claude Project 시스템 지침 — 이후엔 "전사문만 복사"만 붙여넣으면 됨
+  function buildProjectInstructions(c) {
+    var weeks = c.weekTopics.map(function (t, i) { return "W" + String(i + 1).padStart(2, "0") + ": " + (t || ""); }).join("\n");
+    var grading = (c.grading || []).map(function (g) { return g[0] + " " + g[1] + "%"; }).join(", ");
+    var keywords = (c.keywords || []).join(", ");
+    return "너는 " + c.name + "(" + c.code + ", " + c.prof + ") 수업의 노트 정리 조수다.\n\n" +
+      "=== 과목 정보 ===\n교재: " + (c.book || "") + "\n평가 비중: " + grading + "\n주요 용어: " + keywords + "\n\n" +
+      "=== 16주 실라버스 ===\n" + weeks + "\n\n" +
       summaryInstructions() +
-      "=== 앞부분에서 뽑은 내용 ===\n" + partA + "\n\n=== 뒷부분에서 뽑은 내용 ===\n" + partB + "\n\n=== 학생 메모 ===\n" + (note || "(없음)");
+      "사용자는 매번 그 날 수업의 받아쓰기 전사문만 붙여넣는다. 전사문 첫 줄에 " +
+      "\"[" + c.name + " W03 9/14 · 실라버스: ...]\" 같은 형식의 태그가 있으니 여기서 주차 번호·날짜·이번 주 " +
+      "실라버스 주제를 읽어라. 다음 주 주제는 위 16주 실라버스 목록에서 (주차+1)번을 참고하면 된다.";
   }
 
-  function callSummaryApi(cfg, url, promptText) {
-    var body, headers = { "content-type": "application/json" };
-    var isAnthropic = /anthropic\.com/.test(url);
-    if (isAnthropic) {
-      headers["x-api-key"] = cfg.key || "";
-      headers["anthropic-version"] = "2023-06-01";
-      headers["anthropic-dangerous-direct-browser-access"] = "true";
-      body = { model: cfg.model || "claude-sonnet-4-6", max_tokens: 2000, messages: [{ role: "user", content: promptText }] };
+  function copyToClipboard(btn, label, text) {
+    var done = function () {
+      btn.textContent = "복사됨 ✓";
+      setTimeout(function () { btn.textContent = label; }, 2000);
+    };
+    var fail = function (e) { alert("클립보드 복사에 실패했습니다. 아래 내용을 직접 선택해 복사하세요.\n\n" + text); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, fail);
     } else {
-      if (cfg.key) headers["authorization"] = "Bearer " + cfg.key;
-      body = { prompt: promptText };
+      fail();
     }
-    return fetch(url, { method: "POST", headers: headers, body: JSON.stringify(body) })
-      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-      .then(function (data) {
-        if (typeof data === "string") return data;
-        if (data.summary) return data.summary;
-        if (Array.isArray(data.content)) return data.content.filter(function (b) { return b.type === "text"; }).map(function (b) { return b.text; }).join("\n");
-        if (data.choices && data.choices[0]) return data.choices[0].message.content;
-        throw new Error("응답 형식을 모르겠음");
-      });
-  }
-
-  function aiSummary(cfg, url, s, text, note) {
-    if (text.length <= AI_TRANSCRIPT_LIMIT) return callSummaryApi(cfg, url, prompt(s, text, note));
-    var halves = splitAtMidpoint(text);
-    return Promise.all([
-      callSummaryApi(cfg, url, mapPrompt(s, halves[0], "앞부분")),
-      callSummaryApi(cfg, url, mapPrompt(s, halves[1], "뒷부분"))
-    ]).then(function (parts) {
-      return callSummaryApi(cfg, url, reducePrompt(s, parts[0], parts[1], note));
-    });
   }
 
   var STOP = "그리고,그래서,이제,근데,그러니까,여기서,우리가,이것은,저는,그거,이거,about,which,there,their,would,could,should,because,really,going,okay,right,think,thing,just,like,that,this,with,from,have,what,when,then,they,here,also,were,been,into,very,much,some,more,than,them,will,does,make".split(",");
@@ -1526,23 +1517,11 @@
     var cfg = Store.get("ai", {});
     var scrim = el("div", { class: "scrim", onclick: function (e) { if (e.target === scrim) closeS(); } });
     function closeS() { document.body.removeChild(scrim); document.body.style.overflow = ""; }
-    var url = el("input", { class: "add-row", style: "width:100%;background:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 12px", placeholder: apiDefault("summarize") || "https://... (비워두면 기기 내 요약만 사용)", value: cfg.url || "" });
-    var keyI = el("input", { type: "password", style: "width:100%;background:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 12px", placeholder: "비워둘 수 있음", value: cfg.key || "" });
-    var model = el("input", { style: "width:100%;background:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 12px", placeholder: "claude-sonnet-4-6", value: cfg.model || "" });
-    var sttUrl = el("input", { style: "width:100%;background:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 12px", placeholder: apiDefault("transcribe") || "비워두면 요약 API 주소에서 자동으로 유추 (…/transcribe)", value: cfg.sttUrl || "" });
+    var sttUrl = el("input", { class: "add-row", style: "width:100%;background:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 12px", placeholder: apiDefault("transcribe") || "https://.../transcribe", value: cfg.sttUrl || "" });
     var usageBox = el("p", { class: "tiny dim", style: "margin:6px 0 16px", text: "오늘 사용량 확인 중…" });
     refreshUsageBox();
-    // Store에 저장하기 전, 지금 입력창에 있는 값 기준으로 미리보기 — sttEndpoint()와 같은 우선순위
-    // (직접 입력한 받아쓰기 주소 → 직접 입력한 요약 주소에서 유추 → data.js 기본값)
-    function liveSttEndpoint() {
-      if (sttUrl.value.trim()) return sttUrl.value.trim();
-      if (url.value.trim()) {
-        try { return new URL(url.value.trim(), location.href).origin + "/transcribe"; } catch (e) {}
-      }
-      return apiDefault("transcribe");
-    }
     function refreshUsageBox() {
-      var ue = liveSttEndpoint();
+      var ue = (sttUrl.value.trim() || apiDefault("transcribe"));
       ue = ue ? ue.replace(/\/transcribe\/?$/, "/usage") : null;
       if (!ue) { usageBox.textContent = "받아쓰기 API 주소가 없어 사용량을 확인할 수 없습니다."; return; }
       fetch(ue).then(function (r) { return r.json(); }).then(function (u) {
@@ -1552,20 +1531,15 @@
       }).catch(function () { usageBox.textContent = "사용량을 확인할 수 없습니다."; });
     }
     sttUrl.addEventListener("blur", refreshUsageBox);
-    url.addEventListener("blur", refreshUsageBox);
 
     var m = el("div", { class: "modal" }, [
       el("div", { class: "modal-head" }, [el("h2", { text: "설정 · 백업" }), el("button", { class: "ghost", text: "닫기 ✕", onclick: closeS })]),
-      el("p", { class: "eyebrow", text: "요약 API 주소" }), url,
-      el("p", { class: "tiny dim", style: "margin:6px 0 16px", text: "비워두면 위 placeholder의 기본 서버를 씁니다. 직접 만든 프록시가 있으면 여기 넣어 덮어쓰세요 — {prompt, transcript, note, ...}를 받아 {summary:\"마크다운\"} 을 돌려주면 됩니다." }),
-      el("p", { class: "eyebrow", text: "API 키 (선택)" }), keyI,
-      el("p", { class: "tiny dim", style: "margin:6px 0 16px", text: "브라우저에 저장되는 키는 이 기기에서 개발자도구로 볼 수 있습니다. 공개 사이트에서는 키 없이 프록시만 쓰세요." }),
-      el("p", { class: "eyebrow", text: "모델" }), model,
-      el("p", { class: "eyebrow", style: "margin-top:16px", text: "받아쓰기 API 주소 (선택)" }), sttUrl,
+      el("p", { class: "eyebrow", text: "받아쓰기 API 주소" }), sttUrl,
+      el("p", { class: "tiny dim", style: "margin:6px 0 16px", text: "비워두면 위 placeholder의 기본 서버를 씁니다. 요약은 API를 호출하지 않습니다 — Claude용 프롬프트를 복사해 claude.ai에 직접 붙여넣는 방식입니다." }),
       usageBox,
       el("div", { class: "rec-bar", style: "margin-top:20px" }, [
         el("button", { class: "btn primary", text: "저장", onclick: function () {
-          Store.set("ai", { url: url.value.trim(), key: keyI.value.trim(), model: model.value.trim(), sttUrl: sttUrl.value.trim() });
+          Store.set("ai", { sttUrl: sttUrl.value.trim() });
           closeS();
         } }),
         el("button", { class: "btn", text: "↓ 전체 백업(JSON)", onclick: function () {

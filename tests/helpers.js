@@ -107,6 +107,10 @@ function setupGlobals() {
   global.confirm = jest.fn(function () { return true; });
   global.alert = jest.fn();
   global.scrollTo = jest.fn(); // jsdom엔 없음 — 그대로 두면 매 렌더마다 "not implemented" 콘솔 스팸
+  Object.defineProperty(global.navigator, "clipboard", {
+    value: { writeText: jest.fn(function () { return Promise.resolve(); }) },
+    configurable: true
+  });
 }
 
 function boot(sem) {
