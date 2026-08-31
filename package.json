@@ -1,0 +1,12 @@
+{
+  "name": "class-toowani",
+  "private": true,
+  "description": "정적 파일만 배포합니다 — 이 package.json은 assets/app.js 테스트(jest)용입니다.",
+  "scripts": {
+    "test": "jest"
+  },
+  "devDependencies": {
+    "jest": "^30.5.0",
+    "jest-environment-jsdom": "^30.5.0"
+  }
+}
